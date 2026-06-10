@@ -159,8 +159,7 @@ def main_keyboard():
     keyboard = [
         ["➕ إضافة مشترك", "📅 إضافة بتاريخ قديم"],
         ["📋 قائمة المشتركين", "❌ حذف مشترك"],
-        ["🧾 إيصالات الدفع", "🔗 إنشاء رابط للجروبين"],
-        ["🚫 إلغاء"]
+        ["🧾 إيصالات الدفع", "🚫 إلغاء"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -435,33 +434,6 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
                 pass
             remove_subscriber(user_id)
             logger.info(f"تم طرد {full_name} ({user_id})")
-            
-            async def create_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    try:
-        links = []
-
-        for group_id in GROUP_IDS:
-            invite = await context.bot.create_chat_invite_link(
-                chat_id=group_id,
-                member_limit=1
-            )
-
-            links.append(invite.invite_link)
-
-        msg = "🔗 روابط الجروبات (استخدام مرة واحدة):\n\n"
-
-        for i, link in enumerate(links, start=1):
-            msg += f"📌 الجروب {i}:\n{link}\n\n"
-
-        await update.message.reply_text(msg)
-
-    except Exception as e:
-        await update.message.reply_text(
-            f"❌ فشل إنشاء الروابط:\n{e}"
-        )
 
 # ==================== التشغيل ====================
 def main():
@@ -533,11 +505,6 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(MessageHandler(filters.Regex("^📋 قائمة المشتركين$"), list_command))
     app.add_handler(MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel))
-    app.add_handler(
-    MessageHandler(
-        filters.Regex("^🔗 إنشاء رابط للجروبين$"),
-        create_links
-    )
     app.add_handler(add_conv)
     app.add_handler(adddate_conv)
     app.add_handler(remove_conv)
