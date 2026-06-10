@@ -260,23 +260,21 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
 from telegram import ReplyKeyboardMarkup
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-keyboard = [
-["➕ Add", "📅 Add Date"],
-["📋 List", "❌ Remove"]
-]
+    keyboard = [
+        ["➕ Add", "📅 Add Date"],
+        ["📋 List", "❌ Remove"]
+    ]
 
-```
-reply_markup = ReplyKeyboardMarkup(
-    keyboard,
-    resize_keyboard=True
-)
+    reply_markup = ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True
+    )
 
-await update.message.reply_text(
-    "👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\n"
-    "اختر العملية المطلوبة من الأزرار بالأسفل:",
-    reply_markup=reply_markup
-)
-```
+    await update.message.reply_text(
+        "👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\n"
+        "اختر العملية المطلوبة من الأزرار بالأسفل:",
+        reply_markup=reply_markup
+    )
 
 # ==================== التشغيل ====================
 def main():
