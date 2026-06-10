@@ -4,7 +4,8 @@ import os
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes, ChatMemberHandler
+    Application, CommandHandler, ContextTypes,
+    ChatMemberHandler, MessageHandler, filters
 )
 from telegram import ChatMember
 
@@ -275,7 +276,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "اختر العملية المطلوبة من الأزرار بالأسفل:",
         reply_markup=reply_markup
     )
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
 
+    if text == "📋 List":
+        await list_command(update, context)
+
+    elif text == "➕ Add":
+        await update.message.reply_text(
+            "استخدم:\n/add <user_id> <الاسم>"
+        )
+
+    elif text == "📅 Add Date":
+        await update.message.reply_text(
+            "استخدم:\n/adddate <user_id> <الاسم> <YYYY-MM-DD>"
+        )
+
+    elif text == "❌ Remove":
+        await update.message.reply_text(
+            "استخدم:\n/remove <user_id>"
+        )
 # ==================== التشغيل ====================
 def main():
     init_db()
@@ -286,6 +306,9 @@ def main():
     app.add_handler(CommandHandler("adddate", adddate_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("remove", remove_command))
+    app.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler)
+)
     app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
 
     app.job_queue.run_repeating(daily_check, interval=86400, first=10)
