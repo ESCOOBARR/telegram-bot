@@ -1,15 +1,16 @@
 import logging
 import sqlite3
+import os
 from datetime import datetime, timedelta
-from telegram import Update, ChatPermissions
+from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes, MessageHandler, filters
+    Application, CommandHandler, ContextTypes
 )
 
 # ==================== إعدادات ====================
-TOKEN = 8922197031:AAGyO-wkhXHCYavJeNCfWTNXvWrL16Kan6A  # ← حط التوكن الجديد هنا
-GROUP_IDS = [-1002520349216, -1002134124297]   # ← حط ID الجروب هنا (رقم سالب مثلاً -1001234567890)
-ADMIN_IDS = 7146124025  # ← حط الـ ID بتاعك هنا
+TOKEN = os.environ.get("TOKEN")
+GROUP_IDS = [int(x) for x in os.environ.get("GROUP_IDS", "").split(",") if x]
+ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x]
 SUBSCRIPTION_DAYS = 29
 # =================================================
 
@@ -124,11 +125,12 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         user_id = int(context.args[0])
-        try:
-            await context.bot.ban_chat_member(GROUP_ID, user_id)
-            await context.bot.unban_chat_member(GROUP_ID, user_id)
-        except Exception:
-            pass
+        for gid in GROUP_IDS:
+            try:
+                await context.bot.ban_chat_member(gid, user_id)
+                await context.bot.unban_chat_member(gid, user_id)
+            except Exception:
+                pass
         remove_subscriber(user_id)
         await update.message.reply_text(f"✅ تم إزالة المشترك {user_id}.")
     except ValueError:
@@ -144,7 +146,6 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
         expiry = datetime.fromisoformat(expiry_date)
         days_left = (expiry - now).days
 
-        # تحذير قبل 3 أيام
         if days_left <= 3 and days_left > 0 and not warned:
             try:
                 await context.bot.send_message(
@@ -156,21 +157,23 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"مقدرتش ابعت تحذير لـ {user_id}: {e}")
 
-        # طرد بعد انتهاء الاشتراك
         elif days_left <= 0:
+            for gid in GROUP_IDS:
+                try:
+                    await context.bot.ban_chat_member(gid, user_id)
+                    await context.bot.unban_chat_member(gid, user_id)
+                except Exception as e:
+                    logger.warning(f"مقدرتش أطرد {user_id} من {gid}: {e}")
             try:
-                await context.bot.ban_chat_member(GROUP_ID, user_id)
-                await context.bot.unban_chat_member(GROUP_ID, user_id)  # بان مؤقت = طرد بدون حظر
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=f"❌ {full_name}، انتهى اشتراكك وتم إخراجك من الجروب.\n"
                          f"تقدر تجدد اشتراكك وترجع تاني!"
                 )
-                logger.info(f"تم طرد {full_name} ({user_id})")
-            except Exception as e:
-                logger.warning(f"مقدرتش أطرد {user_id}: {e}")
-            finally:
-                remove_subscriber(user_id)
+            except Exception:
+                pass
+            remove_subscriber(user_id)
+            logger.info(f"تم طرد {full_name} ({user_id})")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -191,7 +194,6 @@ def main():
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("remove", remove_command))
 
-    # الفحص اليومي كل 24 ساعة
     app.job_queue.run_repeating(daily_check, interval=86400, first=10)
 
     logger.info("البوت شغال! ✅")
