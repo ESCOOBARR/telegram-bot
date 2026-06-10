@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes
+    Application, CommandHandler, ContextTypes, MessageHandler, filters, ChatMemberHandler
 )
 
 # ==================== إعدادات ====================
@@ -68,6 +68,49 @@ def mark_warned(user_id):
     c.execute("UPDATE subscribers SET warned = 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
+
+def is_subscribed(user_id):
+    conn = sqlite3.connect("subscribers.db")
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM subscribers WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+# ==================== تسجيل أوتوماتيك لما حد يدخل ====================
+async def member_joined(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.chat_member
+    if result.chat.id not in GROUP_IDS:
+        return
+
+    new_member = result.new_chat_member
+    old_member = result.old_chat_member
+
+    # لو دخل الجروب دلوقتي
+    from telegram import ChatMember
+    if (old_member.status in [ChatMember.LEFT, ChatMember.BANNED] and
+            new_member.status == ChatMember.MEMBER):
+
+        user = new_member.user
+        if user.is_bot:
+            return
+
+        # لو مش مسجل خالص
+        if not is_subscribed(user.id):
+            full_name = f"{user.first_name} {user.last_name or ''}".strip()
+            expiry = add_subscriber(user.id, user.username or "", full_name)
+            logger.info(f"تم تسجيل {full_name} ({user.id}) أوتوماتيك")
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text=f"👋 أهلاً {full_name}!\n\n"
+                         f"✅ تم تسجيل اشتراكك أوتوماتيك.\n"
+                         f"📅 اشتراكك ينتهي في: {expiry.strftime('%Y-%m-%d')}\n\n"
+                         f"⚠️ هيتبعتلك تحذير قبل الانتهاء بـ 3 أيام."
+                )
+            except Exception as e:
+                logger.warning(f"مقدرتش ابعت رسالة ترحيب لـ {user.id}: {e}")
 
 # ==================== أوامر الأدمين ====================
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -193,11 +236,12 @@ def main():
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("remove", remove_command))
+    app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
 
     app.job_queue.run_repeating(daily_check, interval=86400, first=10)
 
     logger.info("البوت شغال! ✅")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
