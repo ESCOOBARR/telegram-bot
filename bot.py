@@ -107,6 +107,26 @@ def get_receipts(user_id):
     conn.close()
     return rows
 
+# ==================== إشعار الأدمين ====================
+async def notify_admin(context, user, message_text=None):
+    username = f"@{user.username}" if user.username else "مفيش يوزر"
+    full_name = f"{user.first_name} {user.last_name or ''}".strip()
+    
+    text = (
+        f"👀 شخص فتح البوت أو بعت رسالة!\n\n"
+        f"👤 الاسم: {full_name}\n"
+        f"🆔 ID: {user.id}\n"
+        f"📛 يوزر: {username}\n"
+    )
+    if message_text:
+        text += f"💬 الرسالة: {message_text}"
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=text)
+        except Exception as e:
+            logger.warning(f"مقدرتش ابعت نوتيفيكيشن للأدمين {admin_id}: {e}")
+
 # ==================== تسجيل أوتوماتيك ====================
 async def member_joined(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.chat_member
@@ -145,30 +165,37 @@ def main_keyboard():
 
 # ==================== START ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        # ابعت نوتيفيكيشن للأدمين
+        await notify_admin(context, user, "/start")
+        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
         return
     await update.message.reply_text(
         "👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\nاختر من الأزرار:",
         reply_markup=main_keyboard()
     )
 
+# ==================== إشعار لما حد غريب يبعت رسالة ====================
+async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in ADMIN_IDS:
+        msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
+        await notify_admin(context, user, msg)
+        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
+
 # ==================== إلغاء ====================
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
+        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
         return ConversationHandler.END
     context.user_data.clear()
-    await update.message.reply_text(
-        "🚫 تم الإلغاء.",
-        reply_markup=main_keyboard()
-    )
+    await update.message.reply_text("🚫 تم الإلغاء.", reply_markup=main_keyboard())
     return ConversationHandler.END
 
 # ==================== ADD (خطوة بخطوة) ====================
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
         return ConversationHandler.END
     await update.message.reply_text(
         "📲 ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
@@ -215,7 +242,6 @@ async def add_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== ADD DATE (خطوة بخطوة) ====================
 async def adddate_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
         return ConversationHandler.END
     await update.message.reply_text(
         "📲 ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
@@ -262,7 +288,6 @@ async def adddate_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== REMOVE (خطوة بخطوة) ====================
 async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
         return ConversationHandler.END
     await update.message.reply_text(
         "🆔 ابعتلي الـ ID بتاع المشترك اللي عايز تشيله:\n\nأو اضغط 🚫 إلغاء للرجوع.",
@@ -294,7 +319,6 @@ async def remove_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== GET RECEIPT (خطوة بخطوة) ====================
 async def getreceipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
         return ConversationHandler.END
     await update.message.reply_text(
         "🆔 ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
@@ -307,21 +331,44 @@ async def getreceipt_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cancel(update, context)
     try:
         user_id = int(update.message.text.strip())
-        receipts = get_receipts(user_id)
-        if not receipts:
+
+        # تفاصيل الاشتراك
+        conn = sqlite3.connect("subscribers.db")
+        c = conn.cursor()
+        c.execute("SELECT * FROM subscribers WHERE user_id = ?", (user_id,))
+        sub = c.fetchone()
+        conn.close()
+
+        if sub:
+            _, username, full_name, join_date, expiry_date, warned = sub
+            expiry = datetime.fromisoformat(expiry_date)
+            days_left = (expiry - datetime.now()).days
+            status = "✅ نشط" if days_left > 3 else "⚠️ قارب على الانتهاء" if days_left > 0 else "❌ منتهي"
             await update.message.reply_text(
-                f"📭 مفيش إيصالات محفوظة للمشترك {user_id}.",
-                reply_markup=main_keyboard()
+                f"📋 تفاصيل المشترك:\n\n"
+                f"🆔 ID: {user_id}\n"
+                f"📅 تاريخ الانضمام: {datetime.fromisoformat(join_date).strftime('%Y-%m-%d')}\n"
+                f"📅 ينتهي في: {expiry.strftime('%Y-%m-%d')}\n"
+                f"⏳ باقي: {days_left} يوم\n"
+                f"📊 الحالة: {status}"
             )
-            return ConversationHandler.END
-        await update.message.reply_text(f"🧾 إيصالات المشترك {user_id} ({len(receipts)} إيصال):")
-        for file_id, date in receipts:
-            date_fmt = datetime.fromisoformat(date).strftime('%Y-%m-%d %H:%M')
-            await update.message.reply_photo(
-                photo=file_id,
-                caption=f"📅 تاريخ الحفظ: {date_fmt}"
-            )
-        await update.message.reply_text("✅ تم عرض كل الإيصالات.", reply_markup=main_keyboard())
+        else:
+            await update.message.reply_text(f"⚠️ المشترك {user_id} مش موجود في القاعدة.")
+
+        # الإيصالات
+        receipts = get_receipts(user_id)
+        if receipts:
+            await update.message.reply_text(f"🧾 الإيصالات ({len(receipts)}):")
+            for file_id, date in receipts:
+                date_fmt = datetime.fromisoformat(date).strftime('%Y-%m-%d %H:%M')
+                await update.message.reply_photo(
+                    photo=file_id,
+                    caption=f"📅 تاريخ الحفظ: {date_fmt}"
+                )
+        else:
+            await update.message.reply_text("📭 مفيش إيصالات محفوظة لهذا المشترك.")
+
+        await update.message.reply_text("✅ تم.", reply_markup=main_keyboard())
         return ConversationHandler.END
     except ValueError:
         await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
@@ -330,7 +377,6 @@ async def getreceipt_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== LIST ====================
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور جــوك!")
         return
     subs = get_all_subscribers()
     if not subs:
@@ -464,6 +510,12 @@ def main():
     app.add_handler(remove_conv)
     app.add_handler(getreceipt_conv)
     app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
+
+    # إشعار الأدمين لما حد غريب يبعت رسالة
+    app.add_handler(MessageHandler(
+        filters.ALL & ~filters.COMMAND,
+        unknown_user_message
+    ))
 
     app.job_queue.run_repeating(daily_check, interval=86400, first=10)
 
