@@ -257,15 +257,26 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
             remove_subscriber(user_id)
             logger.info(f"تم طرد {full_name} ({user_id})")
 
+from telegram import ReplyKeyboardMarkup
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\n"
-        "📌 أوامر الأدمين:\n"
-        "/add <user_id> <الاسم> - إضافة مشترك من النهارده\n"
-        "/adddate <user_id> <الاسم> <YYYY-MM-DD> - إضافة بتاريخ قديم\n"
-        "/list - عرض كل المشتركين\n"
-        "/remove <user_id> - حذف مشترك يدوياً"
-    )
+keyboard = [
+["➕ Add", "📅 Add Date"],
+["📋 List", "❌ Remove"]
+]
+
+```
+reply_markup = ReplyKeyboardMarkup(
+    keyboard,
+    resize_keyboard=True
+)
+
+await update.message.reply_text(
+    "👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\n"
+    "اختر العملية المطلوبة من الأزرار بالأسفل:",
+    reply_markup=reply_markup
+)
+```
 
 # ==================== التشغيل ====================
 def main():
