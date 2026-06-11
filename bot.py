@@ -543,7 +543,7 @@ async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return
     await update.message.reply_photo(
-        photo=open("/app/pay.jpg", "rb"),
+        photo="AgACAgEAAxkBAAIBZGoqkpsPmkOtXLVYIc94UziqQrRtAALRC2sbIFVZRTl2q1dDx9CRAQADAgADeQADOwQ",
         caption=(
             "💳 طرق الدفع:\n\n"
             "1️⃣ 01080151847 (Vodafone Cash - Wallet)\n"
