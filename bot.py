@@ -159,9 +159,42 @@ def main_keyboard():
     keyboard = [
         ["➕ إضافة مشترك", "📅 إضافة بتاريخ قديم"],
         ["📋 قائمة المشتركين", "❌ حذف مشترك"],
-        ["🧾 إيصالات الدفع", "🚫 إلغاء"]
+        ["🧾 إيصالات الدفع", "🔗 إنشاء رابط"],
+        ["🚫 إلغاء"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+# ==================== إنشاء رابط دعوة ====================
+async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
+        return
+
+    if not GROUP_IDS:
+        await update.message.reply_text("❌ مفيش جروبات مضافة.")
+        return
+
+    msg = "🔗 روابط الدعوة (استخدام مرة واحدة):
+
+"
+    for gid in GROUP_IDS:
+        try:
+            link = await context.bot.create_chat_invite_link(
+                chat_id=gid,
+                member_limit=1,
+                name="رابط اشتراك"
+            )
+            chat = await context.bot.get_chat(gid)
+            msg += f"📌 {chat.title}:
+{link.invite_link}
+
+"
+        except Exception as e:
+            msg += f"❌ مقدرتش أعمل رابط للجروب {gid}: {e}
+
+"
+
+    await update.message.reply_text(msg, reply_markup=main_keyboard())
 
 # ==================== START ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -179,6 +212,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== إشعار لما حد غريب يبعت رسالة ====================
 async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    # بس في الخاص مش في الجروب
+    if update.effective_chat.type != "private":
+        return
     if user.id not in ADMIN_IDS:
         msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
         await notify_admin(context, user, msg)
@@ -504,6 +540,7 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(MessageHandler(filters.Regex("^📋 قائمة المشتركين$"), list_command))
+    app.add_handler(MessageHandler(filters.Regex("^🔗 إنشاء رابط$"), create_link))
     app.add_handler(MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel))
     app.add_handler(add_conv)
     app.add_handler(adddate_conv)
