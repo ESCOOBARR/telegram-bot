@@ -16,7 +16,7 @@ ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x]
 SUBSCRIPTION_DAYS = 29
 
 # مراحل المحادثة
-WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID = range(6)
+WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID, WAIT_RENEW_ID = range(7)
 # =================================================
 
 logging.basicConfig(level=logging.INFO)
@@ -160,6 +160,7 @@ def main_keyboard():
         ["➕ إضافة مشترك", "📅 إضافة بتاريخ قديم"],
         ["📋 قائمة المشتركين", "❌ حذف مشترك"],
         ["🧾 إيصالات الدفع", "🔗 إنشاء رابط"],
+        ["🔄 تجديد اشتراك", "💳 Pay"],
         ["🚫 إلغاء"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -227,7 +228,10 @@ async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return ConversationHandler.END
     await update.message.reply_text(
-        "📲 ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
+        "📲 ابعتلي الـ ID بتاع المشترك:\n\n"
+        "👉 تقدر تكتب الـ ID مباشرة\n"
+        "👉 أو توجه (Forward) أي رسالة منه وأنا هجيبلك الـ ID أوتوماتيك\n\n"
+        "أو اضغط 🚫 إلغاء للرجوع.",
         reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
     )
     return WAIT_ID
@@ -235,17 +239,36 @@ async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "🚫 إلغاء":
         return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
-        context.user_data["new_user_id"] = user_id
-        await update.message.reply_text(
-            "🖼 تمام! دلوقتي ابعتلي صورة الإيصال:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-        )
-        return WAIT_RECEIPT
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_ID
+
+    user_id = None
+
+    # لو الرسالة forwarded
+    if update.message.forward_origin:
+        try:
+            from telegram import MessageOriginUser
+            origin = update.message.forward_origin
+            if hasattr(origin, "sender_user") and origin.sender_user:
+                user_id = origin.sender_user.id
+        except Exception:
+            pass
+
+    # لو مش forwarded، جرب تاخد الـ ID كنص
+    if user_id is None:
+        try:
+            user_id = int(update.message.text.strip())
+        except (ValueError, AttributeError):
+            await update.message.reply_text(
+                "❌ مقدرتش أجيب الـ ID!\n\n"
+                "اكتب الـ ID كرقم أو وجه رسالة من الشخص مباشرة."
+            )
+            return WAIT_ID
+
+    context.user_data["new_user_id"] = user_id
+    await update.message.reply_text(
+        f"✅ الـ ID: {user_id}\n\n🖼 دلوقتي ابعتلي صورة الإيصال:\n\nأو اضغط 🚫 إلغاء للرجوع.",
+        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+    )
+    return WAIT_RECEIPT
 
 async def add_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "🚫 إلغاء":
@@ -464,6 +487,66 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
             remove_subscriber(user_id)
             logger.info(f"تم طرد {full_name} ({user_id})")
 
+# ==================== تجديد اشتراك ====================
+async def renew_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "🔄 ابعتلي الـ ID بتاع المشترك اللي عايز تجدد اشتراكه:\n\nأو اضغط 🚫 إلغاء للرجوع.",
+        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+    )
+    return WAIT_RENEW_ID
+
+async def renew_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    try:
+        user_id = int(update.message.text.strip())
+        # جدد الاشتراك من النهارده
+        conn = sqlite3.connect("subscribers.db")
+        c = conn.cursor()
+        join_date = datetime.now()
+        expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
+        c.execute("""
+            UPDATE subscribers SET join_date=?, expiry_date=?, warned=0 WHERE user_id=?
+        """, (join_date.isoformat(), expiry_date.isoformat(), user_id))
+        updated = c.rowcount
+        conn.commit()
+        conn.close()
+
+        if updated == 0:
+            # لو مش موجود، ضيفه
+            add_subscriber(user_id, "", str(user_id))
+            await update.message.reply_text(
+                f"✅ تم إضافة وتجديد اشتراك {user_id}!\n"
+                f"📅 ينتهي في: {expiry_date.strftime('%Y-%m-%d')}",
+                reply_markup=main_keyboard()
+            )
+        else:
+            await update.message.reply_text(
+                f"✅ تم تجديد اشتراك {user_id}!\n"
+                f"📅 ينتهي في: {expiry_date.strftime('%Y-%m-%d')}",
+                reply_markup=main_keyboard()
+            )
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+        return WAIT_RENEW_ID
+
+# ==================== Pay ====================
+async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    await update.message.reply_photo(
+        photo=open("/app/pay.jpg", "rb"),
+        caption=(
+            "💳 طرق الدفع:\n\n"
+            "1️⃣ 01080151847 (Vodafone Cash - Wallet)\n"
+            "2️⃣ Binance number will be created soon...\n"
+            "3️⃣ عمـــيل باينـــس فى انتظـار الدفع"
+        )
+    )
+
 # ==================== التشغيل ====================
 def main():
     init_db()
@@ -475,7 +558,7 @@ def main():
             MessageHandler(filters.Regex("^➕ إضافة مشترك$"), add_start)
         ],
         states={
-            WAIT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_id)],
+            WAIT_ID: [MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.FORWARDED, add_got_id)],
             WAIT_RECEIPT: [
                 MessageHandler(filters.PHOTO | filters.Document.ALL, add_got_receipt),
                 MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
@@ -530,11 +613,27 @@ def main():
         ],
     )
 
+    renew_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("renew", renew_start),
+            MessageHandler(filters.Regex("^🔄 تجديد اشتراك$"), renew_start)
+        ],
+        states={
+            WAIT_RENEW_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, renew_got_id)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
+        ],
+    )
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(MessageHandler(filters.Regex("^📋 قائمة المشتركين$"), list_command))
     app.add_handler(MessageHandler(filters.Regex("^🔗 إنشاء رابط$"), create_link))
+    app.add_handler(MessageHandler(filters.Regex("^💳 Pay$"), pay_command))
     app.add_handler(MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel))
+    app.add_handler(renew_conv)
     app.add_handler(add_conv)
     app.add_handler(adddate_conv)
     app.add_handler(remove_conv)
