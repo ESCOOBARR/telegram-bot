@@ -174,9 +174,7 @@ async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ مفيش جروبات مضافة.")
         return
 
-    msg = "🔗 روابط الدعوة (استخدام مرة واحدة):
-
-"
+    msg = "🔗 روابط الدعوة (استخدام مرة واحدة):\n\n"
     for gid in GROUP_IDS:
         try:
             link = await context.bot.create_chat_invite_link(
@@ -185,14 +183,9 @@ async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name="رابط اشتراك"
             )
             chat = await context.bot.get_chat(gid)
-            msg += f"📌 {chat.title}:
-{link.invite_link}
-
-"
+            msg += f"📌 {chat.title}:\n{link.invite_link}\n\n"
         except Exception as e:
-            msg += f"❌ مقدرتش أعمل رابط للجروب {gid}: {e}
-
-"
+            msg += f"❌ مقدرتش أعمل رابط للجروب {gid}: {e}\n\n"
 
     await update.message.reply_text(msg, reply_markup=main_keyboard())
 
