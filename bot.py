@@ -213,7 +213,7 @@ async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if user.id in ADMIN_IDS:
         if update.message.photo:
             file_id = update.message.photo[-1].file_id
-            await update.message.reply_text(f"📸 file_id:\n`{file_id}`", parse_mode="Markdown")
+            await update.message.reply_text(f"file_id: {file_id}")
         return
     msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
     await notify_admin(context, user, msg)
