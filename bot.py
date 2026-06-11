@@ -209,10 +209,15 @@ async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # بس في الخاص مش في الجروب
     if update.effective_chat.type != "private":
         return
-    if user.id not in ADMIN_IDS:
-        msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
-        await notify_admin(context, user, msg)
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
+    # لو الأدمين بعت صورة، ابعتله الـ file_id
+    if user.id in ADMIN_IDS:
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            await update.message.reply_text(f"📸 file_id:\n`{file_id}`", parse_mode="Markdown")
+        return
+    msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
+    await notify_admin(context, user, msg)
+    await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
 
 # ==================== إلغاء ====================
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
