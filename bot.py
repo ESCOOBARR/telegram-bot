@@ -112,9 +112,12 @@ async def notify_admin(context, user, message_text=None):
     username = f"@{user.username}" if user.username else "مفيش يوزر"
     full_name = f"{user.first_name} {user.last_name or ''}".strip()
     
+    # لينك للبروفيل بتاعه
+    profile_link = f'<a href="tg://user?id={user.id}">{full_name}</a>'
+    
     text = (
         f"👀 شخص فتح البوت أو بعت رسالة!\n\n"
-        f"👤 الاسم: {full_name}\n"
+        f"👤 الاسم: {profile_link}\n"
         f"🆔 ID: {user.id}\n"
         f"📛 يوزر: {username}\n"
     )
@@ -123,7 +126,7 @@ async def notify_admin(context, user, message_text=None):
 
     for admin_id in ADMIN_IDS:
         try:
-            await context.bot.send_message(chat_id=admin_id, text=text)
+            await context.bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
         except Exception as e:
             logger.warning(f"مقدرتش ابعت نوتيفيكيشن للأدمين {admin_id}: {e}")
 
@@ -446,9 +449,10 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         expiry = datetime.fromisoformat(expiry_date)
         days_left = (expiry - now).days
         status = "✅" if days_left > 3 else "⚠️" if days_left > 0 else "❌"
-        msg += f"{status} {full_name} | ID: {user_id}\n"
+        profile_link = f'<a href="tg://user?id={user_id}">{full_name}</a>'
+        msg += f"{status} {profile_link} | ID: {user_id}\n"
         msg += f"   باقي: {days_left} يوم | ينتهي: {expiry.strftime('%Y-%m-%d')}\n\n"
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==================== الفحص اليومي ====================
 async def daily_check(context: ContextTypes.DEFAULT_TYPE):
