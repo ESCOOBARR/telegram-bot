@@ -277,17 +277,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== إشعار لما حد غريب يبعت رسالة ====================
 async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    full_name = f"{user.first_name} {user.last_name or ''}".strip()
-    save_visitor(user.id, user.username or "", full_name)
-    # بس في الخاص مش في الجروب
-    if update.effective_chat.type != "private":
+    if not user:
         return
-    # لو الأدمين بعت صورة، ابعتله الـ file_id
+    # تجاهل لو الأدمين في محادثة
     if user.id in ADMIN_IDS:
-        if update.message.photo:
+        if update.message and update.message.photo:
             file_id = update.message.photo[-1].file_id
             await update.message.reply_text(f"file_id: {file_id}")
         return
+    full_name = f"{user.first_name} {user.last_name or ''}".strip()
+    save_visitor(user.id, user.username or "", full_name)
     msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
     await notify_admin(context, user, msg)
     await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
@@ -1087,9 +1086,9 @@ def main():
     app.add_handler(import_conv)
     app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
 
-    # إشعار الأدمين لما حد غريب يبعت رسالة
+    # إشعار الأدمين لما حد غريب يبعت رسالة - في الآخر عشان ميتنازعش مع المحادثات
     app.add_handler(MessageHandler(
-        filters.ALL & ~filters.COMMAND,
+        filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
         unknown_user_message
     ))
 
