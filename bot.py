@@ -60,8 +60,9 @@ def add_subscriber(user_id, username, full_name, join_date=None):
         join_date = datetime.now()
     expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
     c.execute("""
-        INSERT OR REPLACE INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
-        VALUES (?, ?, ?, ?, ?, 0)
+        INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
+        VALUES (%s, %s, %s, %s, %s, 0)
+    ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date, expiry_date=EXCLUDED.expiry_date, warned=0
     """, (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
     conn.commit()
     conn.close()
@@ -78,21 +79,21 @@ def get_all_subscribers():
 def remove_subscriber(user_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("DELETE FROM subscribers WHERE user_id = ?", (user_id,))
+    c.execute("DELETE FROM subscribers WHERE user_id = %s", (user_id,))
     conn.commit()
     conn.close()
 
 def mark_warned(user_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("UPDATE subscribers SET warned = 1 WHERE user_id = ?", (user_id,))
+    c.execute("UPDATE subscribers SET warned = 1 WHERE user_id = %s", (user_id,))
     conn.commit()
     conn.close()
 
 def is_subscribed(user_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT user_id FROM subscribers WHERE user_id = ?", (user_id,))
+    c.execute("SELECT user_id FROM subscribers WHERE user_id = %s", (user_id,))
     row = c.fetchone()
     conn.close()
     return row is not None
@@ -100,7 +101,7 @@ def is_subscribed(user_id):
 def save_receipt(user_id, file_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT INTO receipts (user_id, file_id, date) VALUES (?, ?, ?)",
+    c.execute("INSERT INTO receipts (user_id, file_id, date) VALUES (%s, %s, %s)",
               (user_id, file_id, datetime.now().isoformat()))
     conn.commit()
     conn.close()
@@ -108,7 +109,7 @@ def save_receipt(user_id, file_id):
 def get_receipts(user_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT file_id, date FROM receipts WHERE user_id = ? ORDER BY date DESC", (user_id,))
+    c.execute("SELECT file_id, date FROM receipts WHERE user_id = %s ORDER BY date DESC", (user_id,))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -470,7 +471,7 @@ async def getreceipt_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # تفاصيل الاشتراك
         conn = get_conn()
         c = conn.cursor()
-        c.execute("SELECT * FROM subscribers WHERE user_id = ?", (user_id,))
+        c.execute("SELECT * FROM subscribers WHERE user_id = %s", (user_id,))
         sub = c.fetchone()
         conn.close()
 
@@ -593,7 +594,7 @@ async def renew_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         join_date = datetime.now()
         expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
         c.execute("""
-            UPDATE subscribers SET join_date=?, expiry_date=?, warned=0 WHERE user_id=?
+            UPDATE subscribers SET join_date=%s, expiry_date=%s, warned=0 WHERE user_id=%s
         """, (join_date.isoformat(), expiry_date.isoformat(), user_id))
         updated = c.rowcount
         conn.commit()
@@ -635,7 +636,7 @@ async def search_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(update.message.text.strip())
         conn = get_conn()
         c = conn.cursor()
-        c.execute("SELECT * FROM subscribers WHERE user_id = ?", (user_id,))
+        c.execute("SELECT * FROM subscribers WHERE user_id = %s", (user_id,))
         sub = c.fetchone()
         conn.close()
 
