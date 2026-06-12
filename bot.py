@@ -803,7 +803,7 @@ def main():
         unknown_user_message
     ))
 
-    app.job_queue.run_repeating(daily_check, interval=86400, first=10)
+    app.job_queue.run_repeating(daily_check, interval=86400, first=86400)
 
     logger.info("البوت شغال! ✅")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
