@@ -1,7 +1,8 @@
 import logging
-import sqlite3
 import os
 from datetime import datetime, timedelta
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, ChatMember
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
@@ -23,12 +24,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==================== قاعدة البيانات ====================
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS subscribers (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             username TEXT,
             full_name TEXT,
             join_date TEXT,
@@ -38,8 +44,8 @@ def init_db():
     """)
     c.execute("""
         CREATE TABLE IF NOT EXISTS receipts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             file_id TEXT,
             date TEXT
         )
@@ -48,7 +54,7 @@ def init_db():
     conn.close()
 
 def add_subscriber(user_id, username, full_name, join_date=None):
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     if join_date is None:
         join_date = datetime.now()
@@ -62,7 +68,7 @@ def add_subscriber(user_id, username, full_name, join_date=None):
     return expiry_date
 
 def get_all_subscribers():
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT * FROM subscribers")
     rows = c.fetchall()
@@ -70,21 +76,21 @@ def get_all_subscribers():
     return rows
 
 def remove_subscriber(user_id):
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("DELETE FROM subscribers WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
 def mark_warned(user_id):
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("UPDATE subscribers SET warned = 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
 def is_subscribed(user_id):
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT user_id FROM subscribers WHERE user_id = ?", (user_id,))
     row = c.fetchone()
@@ -92,7 +98,7 @@ def is_subscribed(user_id):
     return row is not None
 
 def save_receipt(user_id, file_id):
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("INSERT INTO receipts (user_id, file_id, date) VALUES (?, ?, ?)",
               (user_id, file_id, datetime.now().isoformat()))
@@ -100,7 +106,7 @@ def save_receipt(user_id, file_id):
     conn.close()
 
 def get_receipts(user_id):
-    conn = sqlite3.connect("subscribers.db")
+    conn = get_conn()
     c = conn.cursor()
     c.execute("SELECT file_id, date FROM receipts WHERE user_id = ? ORDER BY date DESC", (user_id,))
     rows = c.fetchall()
@@ -462,7 +468,7 @@ async def getreceipt_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = int(update.message.text.strip())
 
         # تفاصيل الاشتراك
-        conn = sqlite3.connect("subscribers.db")
+        conn = get_conn()
         c = conn.cursor()
         c.execute("SELECT * FROM subscribers WHERE user_id = ?", (user_id,))
         sub = c.fetchone()
@@ -582,7 +588,7 @@ async def renew_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = int(update.message.text.strip())
         # جدد الاشتراك من النهارده
-        conn = sqlite3.connect("subscribers.db")
+        conn = get_conn()
         c = conn.cursor()
         join_date = datetime.now()
         expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
@@ -627,7 +633,7 @@ async def search_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cancel(update, context)
     try:
         user_id = int(update.message.text.strip())
-        conn = sqlite3.connect("subscribers.db")
+        conn = get_conn()
         c = conn.cursor()
         c.execute("SELECT * FROM subscribers WHERE user_id = ?", (user_id,))
         sub = c.fetchone()
