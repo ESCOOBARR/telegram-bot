@@ -843,10 +843,13 @@ async def export_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subs = c.fetchall()
         c.execute("SELECT * FROM receipts")
         receipts = c.fetchall()
+        c.execute("SELECT * FROM visitors")
+        visitors = c.fetchall()
         conn.close()
         backup = {
             "subscribers": [dict(s) for s in subs],
             "receipts": [dict(r) for r in receipts],
+            "visitors": [dict(v) for v in visitors],
             "exported_at": datetime.now().isoformat()
         }
         backup_json = json.dumps(backup, ensure_ascii=False, indent=2)
@@ -858,6 +861,7 @@ async def export_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📦 نسخة احتياطية\n"
                 f"👥 المشتركين: {len(subs)}\n"
                 f"🧾 الإيصالات: {len(receipts)}\n"
+                f"👀 الزوار: {len(visitors)}\n"
                 f"📅 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             )
         )
@@ -891,11 +895,13 @@ async def import_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data = json.load(f)
         subs = data.get('subscribers', [])
         receipts = data.get('receipts', [])
+        visitors = data.get('visitors', [])
         conn = get_conn()
         c = conn.cursor()
         # Clear existing
         c.execute("DELETE FROM receipts")
         c.execute("DELETE FROM subscribers")
+        c.execute("DELETE FROM visitors")
         # Restore subscribers
         for s in subs:
             c.execute("""
@@ -908,13 +914,21 @@ async def import_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 INSERT INTO receipts (user_id, file_id, date)
                 VALUES (%s, %s, %s)
             """, (r['user_id'], r['file_id'], r['date']))
+        # Restore visitors
+        for v in visitors:
+            c.execute("""
+                INSERT INTO visitors (user_id, username, full_name, first_seen, last_seen)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO NOTHING
+            """, (v['user_id'], v['username'], v['full_name'], v['first_seen'], v['last_seen']))
         conn.commit()
         conn.close()
         os.unlink(tmp_path)
         await update.message.reply_text(
             f"✅ تم استعادة النسخة الاحتياطية!\n"
             f"👥 المشتركين: {len(subs)}\n"
-            f"🧾 الإيصالات: {len(receipts)}",
+            f"🧾 الإيصالات: {len(receipts)}\n"
+            f"👀 الزوار: {len(visitors)}",
             reply_markup=main_keyboard()
         )
         return ConversationHandler.END
