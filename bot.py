@@ -1,5 +1,7 @@
 import logging
 import os
+import io
+import json
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -17,7 +19,7 @@ ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x]
 SUBSCRIPTION_DAYS = 29
 
 # مراحل المحادثة
-WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID, WAIT_RENEW_ID, WAIT_NAME, WAIT_USERNAME, WAIT_DATE_NAME, WAIT_DATE_USERNAME, WAIT_SEARCH_ID = range(12)
+WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID, WAIT_RENEW_ID, WAIT_NAME, WAIT_USERNAME, WAIT_DATE_NAME, WAIT_DATE_USERNAME, WAIT_SEARCH_ID, WAIT_EXPIRY_ID, WAIT_EXPIRY_NAME, WAIT_EXPIRY_USERNAME, WAIT_EXPIRY_DATE, WAIT_IMPORT_FILE = range(17)
 # =================================================
 
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +52,15 @@ def init_db():
             date TEXT
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS visitors (
+            user_id BIGINT PRIMARY KEY,
+            username TEXT,
+            full_name TEXT,
+            first_seen TEXT,
+            last_seen TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -63,6 +74,19 @@ def add_subscriber(user_id, username, full_name, join_date=None):
         INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
         VALUES (%s, %s, %s, %s, %s, 0)
     ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date, expiry_date=EXCLUDED.expiry_date, warned=0
+    """, (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
+    conn.commit()
+    conn.close()
+    return expiry_date
+
+def add_subscriber_with_expiry(user_id, username, full_name, expiry_date):
+    conn = get_conn()
+    c = conn.cursor()
+    join_date = datetime.now()
+    c.execute("""
+        INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
+        VALUES (%s, %s, %s, %s, %s, 0)
+        ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date, expiry_date=EXCLUDED.expiry_date, warned=0
     """, (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
     conn.commit()
     conn.close()
@@ -105,6 +129,37 @@ def save_receipt(user_id, file_id):
               (user_id, file_id, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+def save_visitor(user_id, username, full_name):
+    conn = get_conn()
+    c = conn.cursor()
+    now = datetime.now().isoformat()
+    c.execute("""
+        INSERT INTO visitors (user_id, username, full_name, first_seen, last_seen)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET
+            username = EXCLUDED.username,
+            full_name = EXCLUDED.full_name,
+            last_seen = EXCLUDED.last_seen
+    """, (user_id, username, full_name, now, now))
+    conn.commit()
+    conn.close()
+
+def get_all_visitors():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM visitors ORDER BY last_seen DESC")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_visitor_count():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM visitors")
+    count = c.fetchone()[0]
+    conn.close()
+    return count
 
 def get_receipts(user_id):
     conn = get_conn()
@@ -168,10 +223,13 @@ async def member_joined(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main_keyboard():
     keyboard = [
         ["➕ إضافة مشترك", "📅 إضافة بتاريخ قديم"],
+        ["📅 إضافة بتاريخ انتهاء معين"],
         ["📋 قائمة المشتركين", "❌ حذف مشترك"],
         ["🧾 إيصالات الدفع", "🔗 إنشاء رابط"],
         ["🔄 تجديد اشتراك", "💳 Pay"],
-        ["🔍 كشف مشترك", "🚫 إلغاء"]
+        ["🔍 كشف مشترك", "👀 الزوار"],
+        ["🚫 إلغاء", "📤 نسخة احتياطية"],
+        ["📥 رفع نسخة"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -203,6 +261,9 @@ async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== START ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    full_name = f"{user.first_name} {user.last_name or ''}".strip()
+    save_visitor(user.id, user.username or "", full_name)
+
     if user.id not in ADMIN_IDS:
         # ابعت نوتيفيكيشن للأدمين
         await notify_admin(context, user, "/start")
@@ -216,6 +277,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== إشعار لما حد غريب يبعت رسالة ====================
 async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    full_name = f"{user.first_name} {user.last_name or ''}".strip()
+    save_visitor(user.id, user.username or "", full_name)
     # بس في الخاص مش في الجروب
     if update.effective_chat.type != "private":
         return
@@ -421,6 +484,84 @@ async def adddate_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ التاريخ غلط! لازم يكون:\nYYYY-MM-DD\nمثال: 2026-05-20")
         return WAIT_DATE
 
+# ==================== ADD EXPIRY (خطوة بخطوة) ====================
+async def expiry_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "📲 الخطوة 1/4: ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
+        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+    )
+    return WAIT_EXPIRY_ID
+
+async def expiry_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    try:
+        user_id = int(update.message.text.strip())
+        context.user_data["expiry_user_id"] = user_id
+        await update.message.reply_text(
+            f"✅ الـ ID: {user_id}\n\n"
+            "📝 الخطوة 2/4: ابعتلي اسم المشترك:\n\n"
+            "أو اضغط 🚫 إلغاء للرجوع.",
+            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+        )
+        return WAIT_EXPIRY_NAME
+    except ValueError:
+        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+        return WAIT_EXPIRY_ID
+
+async def expiry_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    full_name = update.message.text.strip()
+    context.user_data["expiry_full_name"] = full_name
+    await update.message.reply_text(
+        f"✅ الاسم: {full_name}\n\n"
+        "📛 الخطوة 3/4: ابعتلي اليوزر بتاعه:\n"
+        "مثال: @username\n\n"
+        "أو اكتب ( - ) لو مفيش يوزر.",
+        reply_markup=ReplyKeyboardMarkup([["-", "🚫 إلغاء"]], resize_keyboard=True)
+    )
+    return WAIT_EXPIRY_USERNAME
+
+async def expiry_got_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    username = update.message.text.strip().replace("@", "")
+    if username == "-":
+        username = ""
+    context.user_data["expiry_username"] = username
+    await update.message.reply_text(
+        "📅 الخطوة 4/4: ابعتلي تاريخ الانتهاء:\nYYYY-MM-DD\nمثال: 2026-12-31\n\nأو اضغط 🚫 إلغاء للرجوع.",
+        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+    )
+    return WAIT_EXPIRY_DATE
+
+async def expiry_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    user_id = context.user_data.get("expiry_user_id")
+    full_name = context.user_data.get("expiry_full_name", str(user_id))
+    username = context.user_data.get("expiry_username", "")
+    try:
+        expiry_date = datetime.strptime(update.message.text.strip(), "%Y-%m-%d")
+        add_subscriber_with_expiry(user_id, username, full_name, expiry_date)
+        days_left = (expiry_date - datetime.now()).days
+        await update.message.reply_text(
+            f"✅ تم إضافة المشترك بتاريخ انتهاء محدد!\n"
+            f"👤 الاسم: {full_name}\n"
+            f"📛 اليوزر: @{username if username else 'مفيش'}\n"
+            f"🆔 ID: {user_id}\n"
+            f"📅 ينتهي الاشتراك: {expiry_date.strftime('%Y-%m-%d')}\n"
+            f"⏳ باقي: {days_left} يوم",
+            reply_markup=main_keyboard()
+        )
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("❌ التاريخ غلط! لازم يكون:\nYYYY-MM-DD\nمثال: 2026-12-31")
+        return WAIT_EXPIRY_DATE
+
 # ==================== REMOVE (خطوة بخطوة) ====================
 async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
@@ -529,6 +670,26 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uname = f"@{username}" if username else "مفيش يوزر"
         msg += f"{status} {profile_link} | {uname}\n"
         msg += f"   🆔 {user_id} | باقي: {days_left} يوم | ينتهي: {expiry.strftime('%Y-%m-%d')}\n\n"
+    await update.message.reply_text(msg, parse_mode="HTML")
+
+# ==================== قائمة الزوار ====================
+async def list_visitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    visitors = get_all_visitors()
+    if not visitors:
+        await update.message.reply_text("📭 مفيش زوار حالياً.")
+        return
+    count = get_visitor_count()
+    msg = f"👀 قائمة الزوار ({count}):\n\n"
+    for v in visitors:
+        user_id, username, full_name, first_seen, last_seen = v
+        uname = f"@{username}" if username else "مفيش يوزر"
+        profile_link = f'<a href="tg://user?id={user_id}">{full_name}</a>'
+        first = datetime.fromisoformat(first_seen).strftime('%Y-%m-%d')
+        last = datetime.fromisoformat(last_seen).strftime('%Y-%m-%d %H:%M')
+        msg += f"👤 {profile_link} | {uname}\n"
+        msg += f"   🆔 {user_id} | أول مرة: {first} | آخر مرة: {last}\n\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==================== الفحص اليومي ====================
@@ -671,6 +832,98 @@ async def search_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
         return WAIT_SEARCH_ID
 
+# ==================== Export Backup ====================
+async def export_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
+        return
+    try:
+        conn = get_conn()
+        c = conn.cursor(cursor_factory=RealDictCursor)
+        c.execute("SELECT * FROM subscribers")
+        subs = c.fetchall()
+        c.execute("SELECT * FROM receipts")
+        receipts = c.fetchall()
+        conn.close()
+        backup = {
+            "subscribers": [dict(s) for s in subs],
+            "receipts": [dict(r) for r in receipts],
+            "exported_at": datetime.now().isoformat()
+        }
+        backup_json = json.dumps(backup, ensure_ascii=False, indent=2)
+        file_obj = io.BytesIO(backup_json.encode('utf-8'))
+        file_obj.name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        await update.message.reply_document(
+            document=file_obj,
+            caption=(
+                f"📦 نسخة احتياطية\n"
+                f"👥 المشتركين: {len(subs)}\n"
+                f"🧾 الإيصالات: {len(receipts)}\n"
+                f"📅 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            )
+        )
+    except Exception as e:
+        logger.error(f"Export error: {e}")
+        await update.message.reply_text(f"❌ حصل خطأ: {e}")
+
+# ==================== Import Backup (خطوة بخطوة) ====================
+async def import_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "📤 ابعتلي ملف النسخة الاحتياطية (JSON):\n\n"
+        "⚠️ هيتم حذف الداتا الحالية واستبدالها بالنسخة.\n"
+        "أو اضغط 🚫 إلغاء للرجوع.",
+        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+    )
+    return WAIT_IMPORT_FILE
+
+async def import_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    if not update.message.document:
+        await update.message.reply_text("❌ ابعت ملف JSON:")
+        return WAIT_IMPORT_FILE
+    try:
+        file = await context.bot.get_file(update.message.document.file_id)
+        tmp_path = f"/tmp/import_{update.effective_user.id}.json"
+        await file.download_to_drive(tmp_path)
+        with open(tmp_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        subs = data.get('subscribers', [])
+        receipts = data.get('receipts', [])
+        conn = get_conn()
+        c = conn.cursor()
+        # Clear existing
+        c.execute("DELETE FROM receipts")
+        c.execute("DELETE FROM subscribers")
+        # Restore subscribers
+        for s in subs:
+            c.execute("""
+                INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (s['user_id'], s['username'], s['full_name'], s['join_date'], s['expiry_date'], s.get('warned', 0)))
+        # Restore receipts
+        for r in receipts:
+            c.execute("""
+                INSERT INTO receipts (user_id, file_id, date)
+                VALUES (%s, %s, %s)
+            """, (r['user_id'], r['file_id'], r['date']))
+        conn.commit()
+        conn.close()
+        os.unlink(tmp_path)
+        await update.message.reply_text(
+            f"✅ تم استعادة النسخة الاحتياطية!\n"
+            f"👥 المشتركين: {len(subs)}\n"
+            f"🧾 الإيصالات: {len(receipts)}",
+            reply_markup=main_keyboard()
+        )
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Import error: {e}")
+        await update.message.reply_text(f"❌ حصل خطأ: {e}")
+        return ConversationHandler.END
+
 # ==================== Pay ====================
 async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
@@ -783,18 +1036,55 @@ def main():
         ],
     )
 
+    expiry_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("expiry", expiry_start),
+            MessageHandler(filters.Regex("^📅 إضافة بتاريخ انتهاء معين$"), expiry_start)
+        ],
+        states={
+            WAIT_EXPIRY_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_id)],
+            WAIT_EXPIRY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_name)],
+            WAIT_EXPIRY_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_username)],
+            WAIT_EXPIRY_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_date)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
+        ],
+    )
+
+    import_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("import", import_start),
+            MessageHandler(filters.Regex("^📥 رفع نسخة$"), import_start)
+        ],
+        states={
+            WAIT_IMPORT_FILE: [
+                MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, import_got_file)
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
+        ],
+    )
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(MessageHandler(filters.Regex("^📋 قائمة المشتركين$"), list_command))
+    app.add_handler(MessageHandler(filters.Regex("^👀 الزوار$"), list_visitors))
     app.add_handler(MessageHandler(filters.Regex("^🔗 إنشاء رابط$"), create_link))
     app.add_handler(MessageHandler(filters.Regex("^💳 Pay$"), pay_command))
     app.add_handler(MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel))
     app.add_handler(renew_conv)
     app.add_handler(search_conv)
+    app.add_handler(expiry_conv)
     app.add_handler(add_conv)
     app.add_handler(adddate_conv)
     app.add_handler(remove_conv)
     app.add_handler(getreceipt_conv)
+    app.add_handler(MessageHandler(filters.Regex("^📤 نسخة احتياطية$"), export_backup))
+    app.add_handler(import_conv)
     app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
 
     # إشعار الأدمين لما حد غريب يبعت رسالة
