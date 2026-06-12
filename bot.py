@@ -19,7 +19,7 @@ ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x]
 SUBSCRIPTION_DAYS = 29
 
 # مراحل المحادثة
-WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID, WAIT_RENEW_ID, WAIT_NAME, WAIT_USERNAME, WAIT_DATE_NAME, WAIT_DATE_USERNAME, WAIT_SEARCH_ID, WAIT_EXPIRY_ID, WAIT_EXPIRY_NAME, WAIT_EXPIRY_USERNAME, WAIT_EXPIRY_DATE, WAIT_IMPORT_FILE = range(17)
+WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID, WAIT_RENEW_ID, WAIT_NAME, WAIT_USERNAME, WAIT_DATE_NAME, WAIT_DATE_USERNAME, WAIT_SEARCH_ID, WAIT_EXPIRY_ID, WAIT_EXPIRY_NAME, WAIT_EXPIRY_USERNAME, WAIT_EXPIRY_DATE, WAIT_IMPORT_FILE, WAIT_DATE_RECEIPT, WAIT_EXPIRY_RECEIPT = range(19)
 # =================================================
 
 logging.basicConfig(level=logging.INFO)
@@ -466,22 +466,44 @@ async def adddate_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = context.user_data.get("date_username", "")
     try:
         join_date = datetime.strptime(update.message.text.strip(), "%Y-%m-%d")
-        expiry = add_subscriber(user_id, username, full_name, join_date)
-        days_left = (expiry - datetime.now()).days
+        context.user_data["date_join_date"] = join_date
         await update.message.reply_text(
-            f"✅ تم إضافة المشترك بتاريخ قديم!\n"
-            f"👤 الاسم: {full_name}\n"
-            f"📛 اليوزر: @{username if username else 'مفيش'}\n"
-            f"🆔 ID: {user_id}\n"
-            f"📅 تاريخ الانضمام: {join_date.strftime('%Y-%m-%d')}\n"
-            f"📅 ينتهي الاشتراك: {expiry.strftime('%Y-%m-%d')}\n"
-            f"⏳ باقي: {days_left} يوم",
-            reply_markup=main_keyboard()
+            "🖼 تمام! دلوقتي ابعتلي صورة الإيصال:\n\nأو اضغط 🚫 إلغاء للرجوع.",
+            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
         )
-        return ConversationHandler.END
+        return WAIT_DATE_RECEIPT
     except ValueError:
         await update.message.reply_text("❌ التاريخ غلط! لازم يكون:\nYYYY-MM-DD\nمثال: 2026-05-20")
         return WAIT_DATE
+
+async def adddate_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    user_id = context.user_data.get("date_user_id")
+    full_name = context.user_data.get("date_full_name", str(user_id))
+    username = context.user_data.get("date_username", "")
+    join_date = context.user_data.get("date_join_date")
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+    elif update.message.document:
+        file_id = update.message.document.file_id
+    else:
+        await update.message.reply_text("❌ ابعت صورة الإيصال:")
+        return WAIT_DATE_RECEIPT
+    expiry = add_subscriber(user_id, username, full_name, join_date)
+    save_receipt(user_id, file_id)
+    days_left = (expiry - datetime.now()).days
+    await update.message.reply_text(
+        f"✅ تم إضافة المشترك وحفظ الإيصال!\n"
+        f"👤 الاسم: {full_name}\n"
+        f"📛 اليوزر: @{username if username else 'مفيش'}\n"
+        f"🆔 ID: {user_id}\n"
+        f"📅 تاريخ الانضمام: {join_date.strftime('%Y-%m-%d')}\n"
+        f"📅 ينتهي الاشتراك: {expiry.strftime('%Y-%m-%d')}\n"
+        f"⏳ باقي: {days_left} يوم",
+        reply_markup=main_keyboard()
+    )
+    return ConversationHandler.END
 
 # ==================== ADD EXPIRY (خطوة بخطوة) ====================
 async def expiry_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -545,21 +567,43 @@ async def expiry_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = context.user_data.get("expiry_username", "")
     try:
         expiry_date = datetime.strptime(update.message.text.strip(), "%Y-%m-%d")
-        add_subscriber_with_expiry(user_id, username, full_name, expiry_date)
-        days_left = (expiry_date - datetime.now()).days
+        context.user_data["expiry_date_val"] = expiry_date
         await update.message.reply_text(
-            f"✅ تم إضافة المشترك بتاريخ انتهاء محدد!\n"
-            f"👤 الاسم: {full_name}\n"
-            f"📛 اليوزر: @{username if username else 'مفيش'}\n"
-            f"🆔 ID: {user_id}\n"
-            f"📅 ينتهي الاشتراك: {expiry_date.strftime('%Y-%m-%d')}\n"
-            f"⏳ باقي: {days_left} يوم",
-            reply_markup=main_keyboard()
+            "🖼 تمام! دلوقتي ابعتلي صورة الإيصال:\n\nأو اضغط 🚫 إلغاء للرجوع.",
+            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
         )
-        return ConversationHandler.END
+        return WAIT_EXPIRY_RECEIPT
     except ValueError:
         await update.message.reply_text("❌ التاريخ غلط! لازم يكون:\nYYYY-MM-DD\nمثال: 2026-12-31")
         return WAIT_EXPIRY_DATE
+
+async def expiry_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "🚫 إلغاء":
+        return await cancel(update, context)
+    user_id = context.user_data.get("expiry_user_id")
+    full_name = context.user_data.get("expiry_full_name", str(user_id))
+    username = context.user_data.get("expiry_username", "")
+    expiry_date = context.user_data.get("expiry_date_val")
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+    elif update.message.document:
+        file_id = update.message.document.file_id
+    else:
+        await update.message.reply_text("❌ ابعت صورة الإيصال:")
+        return WAIT_EXPIRY_RECEIPT
+    add_subscriber_with_expiry(user_id, username, full_name, expiry_date)
+    save_receipt(user_id, file_id)
+    days_left = (expiry_date - datetime.now()).days
+    await update.message.reply_text(
+        f"✅ تم إضافة المشترك وحفظ الإيصال!\n"
+        f"👤 الاسم: {full_name}\n"
+        f"📛 اليوزر: @{username if username else 'مفيش'}\n"
+        f"🆔 ID: {user_id}\n"
+        f"📅 ينتهي الاشتراك: {expiry_date.strftime('%Y-%m-%d')}\n"
+        f"⏳ باقي: {days_left} يوم",
+        reply_markup=main_keyboard()
+    )
+    return ConversationHandler.END
 
 # ==================== REMOVE (خطوة بخطوة) ====================
 async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -986,6 +1030,10 @@ def main():
             WAIT_DATE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_name)],
             WAIT_DATE_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_username)],
             WAIT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_date)],
+            WAIT_DATE_RECEIPT: [
+                MessageHandler(filters.PHOTO | filters.Document.ALL, adddate_got_receipt),
+                MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
+            ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1059,6 +1107,10 @@ def main():
             WAIT_EXPIRY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_name)],
             WAIT_EXPIRY_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_username)],
             WAIT_EXPIRY_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_date)],
+            WAIT_EXPIRY_RECEIPT: [
+                MessageHandler(filters.PHOTO | filters.Document.ALL, expiry_got_receipt),
+                MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
+            ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
