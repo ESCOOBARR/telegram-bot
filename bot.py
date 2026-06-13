@@ -1006,13 +1006,10 @@ def main():
             MessageHandler(filters.Regex("^➕ إضافة مشترك$"), add_start)
         ],
         states={
-            WAIT_ID: [MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.FORWARDED, add_got_id)],
-            WAIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_name)],
-            WAIT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_username)],
-            WAIT_RECEIPT: [
-                MessageHandler(filters.PHOTO | filters.Document.ALL, add_got_receipt),
-                MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-            ],
+            WAIT_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.FORWARDED, add_got_id)],
+            WAIT_NAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_name)],
+            WAIT_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_username)],
+            WAIT_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, add_got_receipt)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1026,10 +1023,11 @@ def main():
             MessageHandler(filters.Regex("^📅 إضافة بتاريخ قديم$"), adddate_start)
         ],
         states={
-            WAIT_DATE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_id)],
-            WAIT_DATE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_name)],
-            WAIT_DATE_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_username)],
-            WAIT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_date)],
+            WAIT_DATE_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_id)],
+            WAIT_DATE_NAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_name)],
+            WAIT_DATE_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_username)],
+            WAIT_DATE: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_date)],
+            WAIT_DATE_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, adddate_got_receipt)],
             WAIT_DATE_RECEIPT: [
                 MessageHandler(filters.PHOTO | filters.Document.ALL, adddate_got_receipt),
                 MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
@@ -1047,7 +1045,7 @@ def main():
             MessageHandler(filters.Regex("^❌ حذف مشترك$"), remove_start)
         ],
         states={
-            WAIT_REMOVE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_got_id)],
+            WAIT_REMOVE_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, remove_got_id)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1061,7 +1059,7 @@ def main():
             MessageHandler(filters.Regex("^🧾 إيصالات الدفع$"), getreceipt_start)
         ],
         states={
-            WAIT_GETRECEIPT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, getreceipt_got_id)],
+            WAIT_GETRECEIPT_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, getreceipt_got_id)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1075,7 +1073,7 @@ def main():
             MessageHandler(filters.Regex("^🔄 تجديد اشتراك$"), renew_start)
         ],
         states={
-            WAIT_RENEW_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, renew_got_id)],
+            WAIT_RENEW_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, renew_got_id)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1089,7 +1087,7 @@ def main():
             MessageHandler(filters.Regex("^🔍 كشف مشترك$"), search_start)
         ],
         states={
-            WAIT_SEARCH_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_got_id)],
+            WAIT_SEARCH_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, search_got_id)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1103,14 +1101,11 @@ def main():
             MessageHandler(filters.Regex("^📅 إضافة بتاريخ انتهاء معين$"), expiry_start)
         ],
         states={
-            WAIT_EXPIRY_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_id)],
-            WAIT_EXPIRY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_name)],
-            WAIT_EXPIRY_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_username)],
-            WAIT_EXPIRY_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_date)],
-            WAIT_EXPIRY_RECEIPT: [
-                MessageHandler(filters.PHOTO | filters.Document.ALL, expiry_got_receipt),
-                MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-            ],
+            WAIT_EXPIRY_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_id)],
+            WAIT_EXPIRY_NAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_name)],
+            WAIT_EXPIRY_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_username)],
+            WAIT_EXPIRY_DATE: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_date)],
+            WAIT_EXPIRY_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, expiry_got_receipt)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
