@@ -1016,6 +1016,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     adddate_conv = ConversationHandler(
@@ -1035,6 +1036,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     remove_conv = ConversationHandler(
@@ -1050,6 +1052,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     getreceipt_conv = ConversationHandler(
@@ -1065,6 +1068,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     renew_conv = ConversationHandler(
@@ -1080,6 +1084,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     search_conv = ConversationHandler(
@@ -1095,6 +1100,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     expiry_conv = ConversationHandler(
@@ -1114,6 +1120,7 @@ def main():
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
         conversation_timeout=300,
+        allow_reentry=True,
     )
 
     import_conv = ConversationHandler(
@@ -1130,6 +1137,8 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
+        allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", start_command))
