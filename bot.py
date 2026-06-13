@@ -5,11 +5,10 @@ import json
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, ChatMember
+from telegram import Update, ReplyKeyboardMarkup, ChatMember
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
-    ChatMemberHandler, MessageHandler, filters,
-    ConversationHandler
+    ChatMemberHandler, MessageHandler, filters
 )
 
 # ==================== إعدادات ====================
@@ -17,50 +16,26 @@ TOKEN = os.environ.get("TOKEN")
 GROUP_IDS = [int(x) for x in os.environ.get("GROUP_IDS", "").split(",") if x]
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x]
 SUBSCRIPTION_DAYS = 29
-
-# مراحل المحادثة
-WAIT_ID, WAIT_RECEIPT, WAIT_DATE_ID, WAIT_DATE, WAIT_REMOVE_ID, WAIT_GETRECEIPT_ID, WAIT_RENEW_ID, WAIT_NAME, WAIT_USERNAME, WAIT_DATE_NAME, WAIT_DATE_USERNAME, WAIT_SEARCH_ID, WAIT_EXPIRY_ID, WAIT_EXPIRY_NAME, WAIT_EXPIRY_USERNAME, WAIT_EXPIRY_DATE, WAIT_IMPORT_FILE, WAIT_DATE_RECEIPT, WAIT_EXPIRY_RECEIPT = range(19)
-# =================================================
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==================== قاعدة البيانات ====================
-DATABASE_URL = os.environ.get("DATABASE_URL")
-
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
     conn = get_conn()
     c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS subscribers (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            full_name TEXT,
-            join_date TEXT,
-            expiry_date TEXT,
-            warned INTEGER DEFAULT 0
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS receipts (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            file_id TEXT,
-            date TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS visitors (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            full_name TEXT,
-            first_seen TEXT,
-            last_seen TEXT
-        )
-    """)
+    c.execute("""CREATE TABLE IF NOT EXISTS subscribers (
+        user_id BIGINT PRIMARY KEY, username TEXT, full_name TEXT,
+        join_date TEXT, expiry_date TEXT, warned INTEGER DEFAULT 0)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS receipts (
+        id SERIAL PRIMARY KEY, user_id BIGINT, file_id TEXT, date TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS visitors (
+        user_id BIGINT PRIMARY KEY, username TEXT, full_name TEXT,
+        first_seen TEXT, last_seen TEXT)""")
     conn.commit()
     conn.close()
 
@@ -70,11 +45,12 @@ def add_subscriber(user_id, username, full_name, join_date=None):
     if join_date is None:
         join_date = datetime.now()
     expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
-    c.execute("""
-        INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
-        VALUES (%s, %s, %s, %s, %s, 0)
-    ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date, expiry_date=EXCLUDED.expiry_date, warned=0
-    """, (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
+    c.execute("""INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
+        VALUES (%s,%s,%s,%s,%s,0)
+        ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username,
+        full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date,
+        expiry_date=EXCLUDED.expiry_date, warned=0""",
+        (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
     conn.commit()
     conn.close()
     return expiry_date
@@ -83,14 +59,14 @@ def add_subscriber_with_expiry(user_id, username, full_name, expiry_date):
     conn = get_conn()
     c = conn.cursor()
     join_date = datetime.now()
-    c.execute("""
-        INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
-        VALUES (%s, %s, %s, %s, %s, 0)
-        ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username, full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date, expiry_date=EXCLUDED.expiry_date, warned=0
-    """, (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
+    c.execute("""INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
+        VALUES (%s,%s,%s,%s,%s,0)
+        ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username,
+        full_name=EXCLUDED.full_name, join_date=EXCLUDED.join_date,
+        expiry_date=EXCLUDED.expiry_date, warned=0""",
+        (user_id, username, full_name, join_date.isoformat(), expiry_date.isoformat()))
     conn.commit()
     conn.close()
-    return expiry_date
 
 def get_all_subscribers():
     conn = get_conn()
@@ -125,23 +101,28 @@ def is_subscribed(user_id):
 def save_receipt(user_id, file_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute("INSERT INTO receipts (user_id, file_id, date) VALUES (%s, %s, %s)",
+    c.execute("INSERT INTO receipts (user_id, file_id, date) VALUES (%s,%s,%s)",
               (user_id, file_id, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+def get_receipts(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT file_id, date FROM receipts WHERE user_id = %s ORDER BY date DESC", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 def save_visitor(user_id, username, full_name):
     conn = get_conn()
     c = conn.cursor()
     now = datetime.now().isoformat()
-    c.execute("""
-        INSERT INTO visitors (user_id, username, full_name, first_seen, last_seen)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (user_id) DO UPDATE SET
-            username = EXCLUDED.username,
-            full_name = EXCLUDED.full_name,
-            last_seen = EXCLUDED.last_seen
-    """, (user_id, username, full_name, now, now))
+    c.execute("""INSERT INTO visitors (user_id, username, full_name, first_seen, last_seen)
+        VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT (user_id) DO UPDATE SET username=EXCLUDED.username,
+        full_name=EXCLUDED.full_name, last_seen=EXCLUDED.last_seen""",
+        (user_id, username, full_name, now, now))
     conn.commit()
     conn.close()
 
@@ -153,39 +134,49 @@ def get_all_visitors():
     conn.close()
     return rows
 
-def get_visitor_count():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM visitors")
-    count = c.fetchone()[0]
-    conn.close()
-    return count
+# ==================== الأزرار ====================
+def main_keyboard():
+    keyboard = [
+        ["➕ إضافة مشترك", "📅 إضافة بتاريخ قديم"],
+        ["📅 إضافة بتاريخ انتهاء معين"],
+        ["📋 قائمة المشتركين", "❌ حذف مشترك"],
+        ["🧾 إيصالات الدفع", "🔗 إنشاء رابط"],
+        ["🔄 تجديد اشتراك", "💳 Pay"],
+        ["🔍 كشف مشترك", "👀 الزوار"],
+        ["📥 رفع نسخة", "📤 نسخة احتياطية"],
+        ["🚫 إلغاء"]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def get_receipts(user_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT file_id, date FROM receipts WHERE user_id = %s ORDER BY date DESC", (user_id,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
+def cancel_keyboard():
+    return ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
+
+def cancel_with_skip_keyboard():
+    return ReplyKeyboardMarkup([["-", "🚫 إلغاء"]], resize_keyboard=True)
+
+# ==================== State Management ====================
+def set_state(context, state, **kwargs):
+    context.user_data.clear()
+    context.user_data['state'] = state
+    context.user_data.update(kwargs)
+
+def get_state(context):
+    return context.user_data.get('state', None)
+
+def clear_state(context):
+    context.user_data.clear()
 
 # ==================== إشعار الأدمين ====================
 async def notify_admin(context, user, message_text=None):
     username = f"@{user.username}" if user.username else "مفيش يوزر"
     full_name = f"{user.first_name} {user.last_name or ''}".strip()
-    
-    # لينك للبروفيل بتاعه
     profile_link = f'<a href="tg://user?id={user.id}">{full_name}</a>'
-    
-    text = (
-        f"👀 شخص فتح البوت أو بعت رسالة!\n\n"
-        f"👤 الاسم: {profile_link}\n"
-        f"🆔 ID: {user.id}\n"
-        f"📛 يوزر: {username}\n"
-    )
+    text = (f"👀 شخص فتح البوت أو بعت رسالة!\n\n"
+            f"👤 الاسم: {profile_link}\n"
+            f"🆔 ID: {user.id}\n"
+            f"📛 يوزر: {username}\n")
     if message_text:
         text += f"💬 الرسالة: {message_text}"
-
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
@@ -207,679 +198,506 @@ async def member_joined(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_subscribed(user.id):
             full_name = f"{user.first_name} {user.last_name or ''}".strip()
             expiry = add_subscriber(user.id, user.username or "", full_name)
-            logger.info(f"تم تسجيل {full_name} ({user.id}) أوتوماتيك")
             try:
                 await context.bot.send_message(
                     chat_id=user.id,
-                    text=f"👋 أهلاً {full_name}!\n\n"
-                         f"✅ تم تسجيل اشتراكك أوتوماتيك.\n"
-                         f"📅 اشتراكك ينتهي في: {expiry.strftime('%Y-%m-%d')}\n\n"
-                         f"⚠️ هيتبعتلك تحذير قبل الانتهاء بـ 3 أيام."
-                )
-            except Exception as e:
-                logger.warning(f"مقدرتش ابعت رسالة ترحيب لـ {user.id}: {e}")
-
-# ==================== الأزرار الرئيسية ====================
-def main_keyboard():
-    keyboard = [
-        ["➕ إضافة مشترك", "📅 إضافة بتاريخ قديم"],
-        ["📅 إضافة بتاريخ انتهاء معين"],
-        ["📋 قائمة المشتركين", "❌ حذف مشترك"],
-        ["🧾 إيصالات الدفع", "🔗 إنشاء رابط"],
-        ["🔄 تجديد اشتراك", "💳 Pay"],
-        ["🔍 كشف مشترك", "👀 الزوار"],
-        ["📥 رفع نسخة", "📤 نسخة احتياطية"],
-        ["🚫 إلغاء"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-# ==================== إنشاء رابط دعوة ====================
-async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
-        return
-
-    if not GROUP_IDS:
-        await update.message.reply_text("❌ مفيش جروبات مضافة.")
-        return
-
-    msg = "🔗 روابط الدعوة (استخدام مرة واحدة):\n\n"
-    for gid in GROUP_IDS:
-        try:
-            link = await context.bot.create_chat_invite_link(
-                chat_id=gid,
-                member_limit=1,
-                name="رابط اشتراك"
-            )
-            chat = await context.bot.get_chat(gid)
-            msg += f"📌 {chat.title}:\n{link.invite_link}\n\n"
-        except Exception as e:
-            msg += f"❌ مقدرتش أعمل رابط للجروب {gid}: {e}\n\n"
-
-    await update.message.reply_text(msg, reply_markup=main_keyboard())
+                    text=f"👋 أهلاً {full_name}!\n\n✅ تم تسجيل اشتراكك.\n"
+                         f"📅 ينتهي في: {expiry.strftime('%Y-%m-%d')}\n\n"
+                         f"⚠️ هيتبعتلك تحذير قبل الانتهاء بـ 3 أيام.")
+            except Exception:
+                pass
 
 # ==================== START ====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     full_name = f"{user.first_name} {user.last_name or ''}".strip()
     save_visitor(user.id, user.username or "", full_name)
-
+    clear_state(context)
     if user.id not in ADMIN_IDS:
-        # ابعت نوتيفيكيشن للأدمين
         await notify_admin(context, user, "/start")
         await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
         return
-    await update.message.reply_text(
-        "👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\nاختر من الأزرار:",
-        reply_markup=main_keyboard()
-    )
+    await update.message.reply_text("👋 أهلاً! أنا بوت إدارة الاشتراكات.\n\nاختر من الأزرار:",
+                                     reply_markup=main_keyboard())
 
-# ==================== إشعار لما حد غريب يبعت رسالة ====================
-async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ==================== Handler رئيسي للأزرار ====================
+async def main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     user = update.effective_user
     if not user:
         return
-    # تجاهل الأدمين تماماً
-    if user.id in ADMIN_IDS:
+
+    # لو مش أدمين
+    if user.id not in ADMIN_IDS:
+        if update.effective_chat.type == "private":
+            full_name = f"{user.first_name} {user.last_name or ''}".strip()
+            save_visitor(user.id, user.username or "", full_name)
+            msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
+            await notify_admin(context, user, msg)
+            await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
         return
-    # تجاهل لو مفيش رسالة
-    if not update.message:
+
+    text = update.message.text or ""
+    state = get_state(context)
+
+    # ==================== إلغاء في أي وقت ====================
+    if text == "🚫 إلغاء":
+        clear_state(context)
+        await update.message.reply_text("🚫 تم الإلغاء.", reply_markup=main_keyboard())
         return
-    full_name = f"{user.first_name} {user.last_name or ''}".strip()
-    save_visitor(user.id, user.username or "", full_name)
-    msg = update.message.text or update.message.caption or "📎 ملف أو صورة"
-    await notify_admin(context, user, msg)
-    await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
 
-# ==================== إلغاء ====================
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
-        return ConversationHandler.END
-    context.user_data.clear()
-    await update.message.reply_text("🚫 تم الإلغاء.", reply_markup=main_keyboard())
-    return ConversationHandler.END
-
-# ==================== ADD (خطوة بخطوة) ====================
-async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📲 الخطوة 1/3: ابعتلي الـ ID بتاع المشترك:\n\n"
-        "👉 تقدر تكتب الـ ID مباشرة\n"
-        "👉 أو توجه (Forward) أي رسالة منه\n\n"
-        "أو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_ID
-
-async def add_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-
-    user_id = None
-
-    # لو الرسالة forwarded
-    if update.message.forward_origin:
-        try:
-            from telegram import MessageOriginUser
-            origin = update.message.forward_origin
-            if hasattr(origin, "sender_user") and origin.sender_user:
-                user_id = origin.sender_user.id
-        except Exception:
-            pass
-
-    # لو مش forwarded، جرب تاخد الـ ID كنص
-    if user_id is None:
-        try:
-            user_id = int(update.message.text.strip())
-        except (ValueError, AttributeError):
+    # ==================== الأزرار الرئيسية ====================
+    if state is None:
+        if text == "➕ إضافة مشترك":
+            set_state(context, "ADD_ID")
             await update.message.reply_text(
-                "❌ مقدرتش أجيب الـ ID!\n\n"
-                "اكتب الـ ID كرقم أو وجه رسالة من الشخص مباشرة."
-            )
-            return WAIT_ID
+                "📲 الخطوة 1/4: ابعتلي الـ ID بتاع المشترك:\n\n"
+                "👉 اكتب الـ ID مباشرة\n"
+                "👉 أو وجّه رسالة منه\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-    context.user_data["new_user_id"] = user_id
-    await update.message.reply_text(
-        f"✅ الـ ID: {user_id}\n\n"
-        "📝 الخطوة 2/3: ابعتلي اسم المشترك:\n\n"
-        "أو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_NAME
+        elif text == "📅 إضافة بتاريخ قديم":
+            set_state(context, "ADDDATE_ID")
+            await update.message.reply_text(
+                "📲 الخطوة 1/5: ابعتلي الـ ID:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-async def add_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    full_name = update.message.text.strip()
-    context.user_data["new_full_name"] = full_name
-    await update.message.reply_text(
-        f"✅ الاسم: {full_name}\n\n"
-        "📛 الخطوة 3/3: ابعتلي اليوزر بتاعه:\n"
-        "مثال: @username\n\n"
-        "أو اكتب ( - ) لو مفيش يوزر.",
-        reply_markup=ReplyKeyboardMarkup([["-", "🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_USERNAME
+        elif text == "📅 إضافة بتاريخ انتهاء معين":
+            set_state(context, "EXPIRY_ID")
+            await update.message.reply_text(
+                "📲 الخطوة 1/5: ابعتلي الـ ID:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-async def add_got_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    username = update.message.text.strip()
-    if username == "-":
-        username = ""
-    else:
-        username = username.replace("@", "")
-    context.user_data["new_username"] = username
-    await update.message.reply_text(
-        "🖼 تمام! دلوقتي ابعتلي صورة الإيصال:\n\n"
-        "أو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_RECEIPT
+        elif text == "📋 قائمة المشتركين":
+            await list_command(update, context)
 
-async def add_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    user_id = context.user_data.get("new_user_id")
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
-    else:
-        await update.message.reply_text("❌ ابعت صورة الإيصال:")
-        return WAIT_RECEIPT
-    full_name = context.user_data.get("new_full_name", str(user_id))
-    username = context.user_data.get("new_username", "")
-    expiry = add_subscriber(user_id, username, full_name)
-    save_receipt(user_id, file_id)
-    await update.message.reply_text(
-        f"✅ تم تسجيل المشترك وحفظ الإيصال!\n"
-        f"👤 الاسم: {full_name}\n"
-        f"📛 اليوزر: @{username if username else 'مفيش'}\n"
-        f"🆔 ID: {user_id}\n"
-        f"📅 ينتهي الاشتراك: {expiry.strftime('%Y-%m-%d')}",
-        reply_markup=main_keyboard()
-    )
-    return ConversationHandler.END
+        elif text == "❌ حذف مشترك":
+            set_state(context, "REMOVE_ID")
+            await update.message.reply_text(
+                "🆔 ابعتلي الـ ID بتاع المشترك:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-# ==================== ADD DATE (خطوة بخطوة) ====================
-async def adddate_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📲 الخطوة 1/4: ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_DATE_ID
+        elif text == "🧾 إيصالات الدفع":
+            set_state(context, "RECEIPT_ID")
+            await update.message.reply_text(
+                "🆔 ابعتلي الـ ID بتاع المشترك:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-async def adddate_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
-        context.user_data["date_user_id"] = user_id
-        await update.message.reply_text(
-            f"✅ الـ ID: {user_id}\n\n"
-            "📝 الخطوة 2/4: ابعتلي اسم المشترك:\n\n"
-            "أو اضغط 🚫 إلغاء للرجوع.",
-            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-        )
-        return WAIT_DATE_NAME
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_DATE_ID
+        elif text == "🔗 إنشاء رابط":
+            await create_link(update, context)
 
-async def adddate_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    full_name = update.message.text.strip()
-    context.user_data["date_full_name"] = full_name
-    await update.message.reply_text(
-        f"✅ الاسم: {full_name}\n\n"
-        "📛 الخطوة 3/4: ابعتلي اليوزر بتاعه:\n"
-        "مثال: @username\n\n"
-        "أو اكتب ( - ) لو مفيش يوزر.",
-        reply_markup=ReplyKeyboardMarkup([["-", "🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_DATE_USERNAME
+        elif text == "💳 Pay":
+            await pay_command(update, context)
 
-async def adddate_got_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    username = update.message.text.strip().replace("@", "")
-    if username == "-":
-        username = ""
-    context.user_data["date_username"] = username
-    await update.message.reply_text(
-        "📅 الخطوة 4/4: ابعتلي تاريخ الانضمام:\nYYYY-MM-DD\nمثال: 2026-05-20\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_DATE
+        elif text == "🔄 تجديد اشتراك":
+            set_state(context, "RENEW_ID")
+            await update.message.reply_text(
+                "🆔 ابعتلي الـ ID بتاع المشترك:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-async def adddate_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    user_id = context.user_data.get("date_user_id")
-    full_name = context.user_data.get("date_full_name", str(user_id))
-    username = context.user_data.get("date_username", "")
-    try:
-        join_date = datetime.strptime(update.message.text.strip(), "%Y-%m-%d")
-        context.user_data["date_join_date"] = join_date
-        await update.message.reply_text(
-            "🖼 تمام! دلوقتي ابعتلي صورة الإيصال:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-        )
-        return WAIT_DATE_RECEIPT
-    except ValueError:
-        await update.message.reply_text("❌ التاريخ غلط! لازم يكون:\nYYYY-MM-DD\nمثال: 2026-05-20")
-        return WAIT_DATE
+        elif text == "🔍 كشف مشترك":
+            set_state(context, "SEARCH_ID")
+            await update.message.reply_text(
+                "🆔 ابعتلي الـ ID بتاع المشترك:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-async def adddate_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    user_id = context.user_data.get("date_user_id")
-    full_name = context.user_data.get("date_full_name", str(user_id))
-    username = context.user_data.get("date_username", "")
-    join_date = context.user_data.get("date_join_date")
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
-    else:
-        await update.message.reply_text("❌ ابعت صورة الإيصال:")
-        return WAIT_DATE_RECEIPT
-    expiry = add_subscriber(user_id, username, full_name, join_date)
-    save_receipt(user_id, file_id)
-    days_left = (expiry - datetime.now()).days
-    await update.message.reply_text(
-        f"✅ تم إضافة المشترك وحفظ الإيصال!\n"
-        f"👤 الاسم: {full_name}\n"
-        f"📛 اليوزر: @{username if username else 'مفيش'}\n"
-        f"🆔 ID: {user_id}\n"
-        f"📅 تاريخ الانضمام: {join_date.strftime('%Y-%m-%d')}\n"
-        f"📅 ينتهي الاشتراك: {expiry.strftime('%Y-%m-%d')}\n"
-        f"⏳ باقي: {days_left} يوم",
-        reply_markup=main_keyboard()
-    )
-    return ConversationHandler.END
+        elif text == "👀 الزوار":
+            await list_visitors(update, context)
 
-# ==================== ADD EXPIRY (خطوة بخطوة) ====================
-async def expiry_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📲 الخطوة 1/4: ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_EXPIRY_ID
+        elif text == "📤 نسخة احتياطية":
+            await export_backup(update, context)
 
-async def expiry_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
-        context.user_data["expiry_user_id"] = user_id
-        await update.message.reply_text(
-            f"✅ الـ ID: {user_id}\n\n"
-            "📝 الخطوة 2/4: ابعتلي اسم المشترك:\n\n"
-            "أو اضغط 🚫 إلغاء للرجوع.",
-            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-        )
-        return WAIT_EXPIRY_NAME
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_EXPIRY_ID
+        elif text == "📥 رفع نسخة":
+            set_state(context, "IMPORT_FILE")
+            await update.message.reply_text(
+                "📎 ابعتلي ملف الـ JSON:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
 
-async def expiry_got_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    full_name = update.message.text.strip()
-    context.user_data["expiry_full_name"] = full_name
-    await update.message.reply_text(
-        f"✅ الاسم: {full_name}\n\n"
-        "📛 الخطوة 3/4: ابعتلي اليوزر بتاعه:\n"
-        "مثال: @username\n\n"
-        "أو اكتب ( - ) لو مفيش يوزر.",
-        reply_markup=ReplyKeyboardMarkup([["-", "🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_EXPIRY_USERNAME
+        elif update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            await update.message.reply_text(f"file_id: {file_id}")
 
-async def expiry_got_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    username = update.message.text.strip().replace("@", "")
-    if username == "-":
-        username = ""
-    context.user_data["expiry_username"] = username
-    await update.message.reply_text(
-        "📅 الخطوة 4/4: ابعتلي تاريخ الانتهاء:\nYYYY-MM-DD\nمثال: 2026-12-31\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_EXPIRY_DATE
+        return
 
-async def expiry_got_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    user_id = context.user_data.get("expiry_user_id")
-    full_name = context.user_data.get("expiry_full_name", str(user_id))
-    username = context.user_data.get("expiry_username", "")
-    try:
-        expiry_date = datetime.strptime(update.message.text.strip(), "%Y-%m-%d")
-        context.user_data["expiry_date_val"] = expiry_date
-        await update.message.reply_text(
-            "🖼 تمام! دلوقتي ابعتلي صورة الإيصال:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-            reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-        )
-        return WAIT_EXPIRY_RECEIPT
-    except ValueError:
-        await update.message.reply_text("❌ التاريخ غلط! لازم يكون:\nYYYY-MM-DD\nمثال: 2026-12-31")
-        return WAIT_EXPIRY_DATE
+    # ==================== معالجة الـ States ====================
 
-async def expiry_got_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    user_id = context.user_data.get("expiry_user_id")
-    full_name = context.user_data.get("expiry_full_name", str(user_id))
-    username = context.user_data.get("expiry_username", "")
-    expiry_date = context.user_data.get("expiry_date_val")
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
-    else:
-        await update.message.reply_text("❌ ابعت صورة الإيصال:")
-        return WAIT_EXPIRY_RECEIPT
-    add_subscriber_with_expiry(user_id, username, full_name, expiry_date)
-    save_receipt(user_id, file_id)
-    days_left = (expiry_date - datetime.now()).days
-    await update.message.reply_text(
-        f"✅ تم إضافة المشترك وحفظ الإيصال!\n"
-        f"👤 الاسم: {full_name}\n"
-        f"📛 اليوزر: @{username if username else 'مفيش'}\n"
-        f"🆔 ID: {user_id}\n"
-        f"📅 ينتهي الاشتراك: {expiry_date.strftime('%Y-%m-%d')}\n"
-        f"⏳ باقي: {days_left} يوم",
-        reply_markup=main_keyboard()
-    )
-    return ConversationHandler.END
-
-# ==================== REMOVE (خطوة بخطوة) ====================
-async def remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "🆔 ابعتلي الـ ID بتاع المشترك اللي عايز تشيله:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_REMOVE_ID
-
-async def remove_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
-        for gid in GROUP_IDS:
+    # --- ADD ---
+    if state == "ADD_ID":
+        user_id = None
+        if update.message.forward_origin:
             try:
-                await context.bot.ban_chat_member(gid, user_id)
-                await context.bot.unban_chat_member(gid, user_id)
+                origin = update.message.forward_origin
+                if hasattr(origin, "sender_user") and origin.sender_user:
+                    user_id = origin.sender_user.id
             except Exception:
                 pass
-        remove_subscriber(user_id)
+        if user_id is None:
+            try:
+                user_id = int(text.strip())
+            except ValueError:
+                await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+                return
+        context.user_data['add_id'] = user_id
+        context.user_data['state'] = "ADD_NAME"
         await update.message.reply_text(
-            f"✅ تم إزالة المشترك {user_id} من الجروبين.",
-            reply_markup=main_keyboard()
-        )
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_REMOVE_ID
+            f"✅ ID: {user_id}\n\n📝 الخطوة 2/4: اسم المشترك:\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_keyboard())
 
-# ==================== GET RECEIPT (خطوة بخطوة) ====================
-async def getreceipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "🆔 ابعتلي الـ ID بتاع المشترك:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_GETRECEIPT_ID
+    elif state == "ADD_NAME":
+        context.user_data['add_name'] = text.strip()
+        context.user_data['state'] = "ADD_USERNAME"
+        await update.message.reply_text(
+            "📛 الخطوة 3/4: اليوزر:\nمثال: @username\nأو ( - ) لو مفيش\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_with_skip_keyboard())
 
-async def getreceipt_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
+    elif state == "ADD_USERNAME":
+        username = text.strip().replace("@", "")
+        if username == "-":
+            username = ""
+        context.user_data['add_username'] = username
+        context.user_data['state'] = "ADD_RECEIPT"
+        await update.message.reply_text(
+            "🖼 الخطوة 4/4: ابعت صورة الإيصال:\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_keyboard())
 
-        # تفاصيل الاشتراك
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM subscribers WHERE user_id = %s", (user_id,))
-        sub = c.fetchone()
-        conn.close()
+    elif state == "ADD_RECEIPT":
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+        elif update.message.document:
+            file_id = update.message.document.file_id
+        else:
+            await update.message.reply_text("❌ ابعت صورة الإيصال:")
+            return
+        uid = context.user_data['add_id']
+        name = context.user_data['add_name']
+        uname = context.user_data['add_username']
+        expiry = add_subscriber(uid, uname, name)
+        save_receipt(uid, file_id)
+        clear_state(context)
+        await update.message.reply_text(
+            f"✅ تم التسجيل!\n👤 {name}\n📛 @{uname if uname else 'مفيش'}\n🆔 {uid}\n📅 ينتهي: {expiry.strftime('%Y-%m-%d')}",
+            reply_markup=main_keyboard())
 
-        if sub:
+    # --- ADDDATE ---
+    elif state == "ADDDATE_ID":
+        try:
+            uid = int(text.strip())
+            context.user_data['adddate_id'] = uid
+            context.user_data['state'] = "ADDDATE_NAME"
+            await update.message.reply_text(
+                f"✅ ID: {uid}\n\n📝 الخطوة 2/5: اسم المشترك:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+
+    elif state == "ADDDATE_NAME":
+        context.user_data['adddate_name'] = text.strip()
+        context.user_data['state'] = "ADDDATE_USERNAME"
+        await update.message.reply_text(
+            "📛 الخطوة 3/5: اليوزر:\nأو ( - ) لو مفيش\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_with_skip_keyboard())
+
+    elif state == "ADDDATE_USERNAME":
+        username = text.strip().replace("@", "")
+        if username == "-":
+            username = ""
+        context.user_data['adddate_username'] = username
+        context.user_data['state'] = "ADDDATE_DATE"
+        await update.message.reply_text(
+            "📅 الخطوة 4/5: تاريخ الانضمام:\nYYYY-MM-DD\nمثال: 2026-05-20\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_keyboard())
+
+    elif state == "ADDDATE_DATE":
+        try:
+            join_date = datetime.strptime(text.strip(), "%Y-%m-%d")
+            context.user_data['adddate_date'] = join_date
+            context.user_data['state'] = "ADDDATE_RECEIPT"
+            await update.message.reply_text(
+                "🖼 الخطوة 5/5: ابعت صورة الإيصال:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ التاريخ غلط! لازم: YYYY-MM-DD\nمثال: 2026-05-20")
+
+    elif state == "ADDDATE_RECEIPT":
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+        elif update.message.document:
+            file_id = update.message.document.file_id
+        else:
+            await update.message.reply_text("❌ ابعت صورة الإيصال:")
+            return
+        uid = context.user_data['adddate_id']
+        name = context.user_data['adddate_name']
+        uname = context.user_data['adddate_username']
+        join_date = context.user_data['adddate_date']
+        expiry = add_subscriber(uid, uname, name, join_date)
+        save_receipt(uid, file_id)
+        days_left = (expiry - datetime.now()).days
+        clear_state(context)
+        await update.message.reply_text(
+            f"✅ تم!\n👤 {name}\n📛 @{uname if uname else 'مفيش'}\n🆔 {uid}\n"
+            f"📅 انضم: {join_date.strftime('%Y-%m-%d')}\n📅 ينتهي: {expiry.strftime('%Y-%m-%d')}\n⏳ باقي: {days_left} يوم",
+            reply_markup=main_keyboard())
+
+    # --- EXPIRY ---
+    elif state == "EXPIRY_ID":
+        try:
+            uid = int(text.strip())
+            context.user_data['expiry_id'] = uid
+            context.user_data['state'] = "EXPIRY_NAME"
+            await update.message.reply_text(
+                f"✅ ID: {uid}\n\n📝 الخطوة 2/5: اسم المشترك:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+
+    elif state == "EXPIRY_NAME":
+        context.user_data['expiry_name'] = text.strip()
+        context.user_data['state'] = "EXPIRY_USERNAME"
+        await update.message.reply_text(
+            "📛 الخطوة 3/5: اليوزر:\nأو ( - ) لو مفيش\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_with_skip_keyboard())
+
+    elif state == "EXPIRY_USERNAME":
+        username = text.strip().replace("@", "")
+        if username == "-":
+            username = ""
+        context.user_data['expiry_username'] = username
+        context.user_data['state'] = "EXPIRY_DATE"
+        await update.message.reply_text(
+            "📅 الخطوة 4/5: تاريخ الانتهاء:\nYYYY-MM-DD\nمثال: 2026-12-31\n\nأو 🚫 إلغاء",
+            reply_markup=cancel_keyboard())
+
+    elif state == "EXPIRY_DATE":
+        try:
+            expiry_date = datetime.strptime(text.strip(), "%Y-%m-%d")
+            context.user_data['expiry_date'] = expiry_date
+            context.user_data['state'] = "EXPIRY_RECEIPT"
+            await update.message.reply_text(
+                "🖼 الخطوة 5/5: ابعت صورة الإيصال:\n\nأو 🚫 إلغاء",
+                reply_markup=cancel_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ التاريخ غلط! لازم: YYYY-MM-DD")
+
+    elif state == "EXPIRY_RECEIPT":
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+        elif update.message.document:
+            file_id = update.message.document.file_id
+        else:
+            await update.message.reply_text("❌ ابعت صورة الإيصال:")
+            return
+        uid = context.user_data['expiry_id']
+        name = context.user_data['expiry_name']
+        uname = context.user_data['expiry_username']
+        expiry_date = context.user_data['expiry_date']
+        add_subscriber_with_expiry(uid, uname, name, expiry_date)
+        save_receipt(uid, file_id)
+        days_left = (expiry_date - datetime.now()).days
+        clear_state(context)
+        await update.message.reply_text(
+            f"✅ تم!\n👤 {name}\n📛 @{uname if uname else 'مفيش'}\n🆔 {uid}\n"
+            f"📅 ينتهي: {expiry_date.strftime('%Y-%m-%d')}\n⏳ باقي: {days_left} يوم",
+            reply_markup=main_keyboard())
+
+    # --- REMOVE ---
+    elif state == "REMOVE_ID":
+        try:
+            uid = int(text.strip())
+            for gid in GROUP_IDS:
+                try:
+                    await context.bot.ban_chat_member(gid, uid)
+                    await context.bot.unban_chat_member(gid, uid)
+                except Exception:
+                    pass
+            remove_subscriber(uid)
+            clear_state(context)
+            await update.message.reply_text(f"✅ تم إزالة المشترك {uid}.", reply_markup=main_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+
+    # --- RECEIPT ---
+    elif state == "RECEIPT_ID":
+        try:
+            uid = int(text.strip())
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT * FROM subscribers WHERE user_id = %s", (uid,))
+            sub = c.fetchone()
+            conn.close()
+            if sub:
+                _, username, full_name, join_date, expiry_date, warned = sub
+                expiry = datetime.fromisoformat(expiry_date)
+                days_left = (expiry - datetime.now()).days
+                status = "✅ نشط" if days_left > 3 else "⚠️ قارب على الانتهاء" if days_left > 0 else "❌ منتهي"
+                uname = f"@{username}" if username else "مفيش يوزر"
+                profile_link = f'<a href="tg://user?id={uid}">{full_name}</a>'
+                await update.message.reply_text(
+                    f"📋 تفاصيل المشترك:\n\n👤 {profile_link}\n📛 {uname}\n🆔 {uid}\n"
+                    f"📅 انضم: {datetime.fromisoformat(join_date).strftime('%Y-%m-%d')}\n"
+                    f"📅 ينتهي: {expiry.strftime('%Y-%m-%d')}\n⏳ باقي: {days_left} يوم\n📊 {status}",
+                    parse_mode="HTML")
+            else:
+                await update.message.reply_text(f"⚠️ المشترك {uid} مش موجود.")
+            receipts = get_receipts(uid)
+            if receipts:
+                await update.message.reply_text(f"🧾 الإيصالات ({len(receipts)}):")
+                for fid, date in receipts:
+                    date_fmt = datetime.fromisoformat(date).strftime('%Y-%m-%d %H:%M')
+                    await update.message.reply_photo(photo=fid, caption=f"📅 {date_fmt}")
+            else:
+                await update.message.reply_text("📭 مفيش إيصالات.")
+            clear_state(context)
+            await update.message.reply_text("✅ تم.", reply_markup=main_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+
+    # --- RENEW ---
+    elif state == "RENEW_ID":
+        try:
+            uid = int(text.strip())
+            join_date = datetime.now()
+            expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("UPDATE subscribers SET join_date=%s, expiry_date=%s, warned=0 WHERE user_id=%s",
+                      (join_date.isoformat(), expiry_date.isoformat(), uid))
+            updated = c.rowcount
+            conn.commit()
+            conn.close()
+            if updated == 0:
+                add_subscriber(uid, "", str(uid))
+            clear_state(context)
+            await update.message.reply_text(
+                f"✅ تم التجديد!\n🆔 {uid}\n📅 ينتهي: {expiry_date.strftime('%Y-%m-%d')}",
+                reply_markup=main_keyboard())
+        except ValueError:
+            await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+
+    # --- SEARCH ---
+    elif state == "SEARCH_ID":
+        try:
+            uid = int(text.strip())
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT * FROM subscribers WHERE user_id = %s", (uid,))
+            sub = c.fetchone()
+            conn.close()
+            if not sub:
+                clear_state(context)
+                await update.message.reply_text(f"❌ المشترك {uid} مش موجود.", reply_markup=main_keyboard())
+                return
             _, username, full_name, join_date, expiry_date, warned = sub
             expiry = datetime.fromisoformat(expiry_date)
             days_left = (expiry - datetime.now()).days
             status = "✅ نشط" if days_left > 3 else "⚠️ قارب على الانتهاء" if days_left > 0 else "❌ منتهي"
+            uname = f"@{username}" if username else "مفيش يوزر"
+            profile_link = f'<a href="tg://user?id={uid}">{full_name}</a>'
+            clear_state(context)
             await update.message.reply_text(
-                f"📋 تفاصيل المشترك:\n\n"
-                f"🆔 ID: {user_id}\n"
-                f"📅 تاريخ الانضمام: {datetime.fromisoformat(join_date).strftime('%Y-%m-%d')}\n"
-                f"📅 ينتهي في: {expiry.strftime('%Y-%m-%d')}\n"
-                f"⏳ باقي: {days_left} يوم\n"
-                f"📊 الحالة: {status}"
-            )
+                f"🔍 تفاصيل المشترك:\n\n👤 {profile_link}\n📛 {uname}\n🆔 {uid}\n"
+                f"📅 انضم: {datetime.fromisoformat(join_date).strftime('%Y-%m-%d')}\n"
+                f"📅 ينتهي: {expiry.strftime('%Y-%m-%d')}\n⏳ باقي: {days_left} يوم\n📊 {status}",
+                reply_markup=main_keyboard(), parse_mode="HTML")
+        except ValueError:
+            await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
+
+    # --- IMPORT ---
+    elif state == "IMPORT_FILE":
+        if update.message.document:
+            try:
+                file = await context.bot.get_file(update.message.document.file_id)
+                file_bytes = await file.download_as_bytearray()
+                data = json.loads(file_bytes.decode('utf-8'))
+                subs = data.get('subscribers', [])
+                receipts = data.get('receipts', [])
+                visitors = data.get('visitors', [])
+                conn = get_conn()
+                c = conn.cursor()
+                c.execute("DELETE FROM receipts")
+                c.execute("DELETE FROM subscribers")
+                c.execute("DELETE FROM visitors")
+                for s in subs:
+                    c.execute("""INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
+                        VALUES (%s,%s,%s,%s,%s,%s)""",
+                        (s['user_id'], s['username'], s['full_name'], s['join_date'], s['expiry_date'], s.get('warned', 0)))
+                for r in receipts:
+                    c.execute("INSERT INTO receipts (user_id, file_id, date) VALUES (%s,%s,%s)",
+                              (r['user_id'], r['file_id'], r['date']))
+                for v in visitors:
+                    c.execute("""INSERT INTO visitors (user_id, username, full_name, first_seen, last_seen)
+                        VALUES (%s,%s,%s,%s,%s) ON CONFLICT (user_id) DO NOTHING""",
+                        (v['user_id'], v['username'], v['full_name'], v['first_seen'], v['last_seen']))
+                conn.commit()
+                conn.close()
+                clear_state(context)
+                await update.message.reply_text(
+                    f"✅ تم الاستعادة!\n👥 {len(subs)} مشترك\n🧾 {len(receipts)} إيصال\n👀 {len(visitors)} زائر",
+                    reply_markup=main_keyboard())
+            except Exception as e:
+                await update.message.reply_text(f"❌ حصل خطأ: {e}")
         else:
-            await update.message.reply_text(f"⚠️ المشترك {user_id} مش موجود في القاعدة.")
+            await update.message.reply_text("❌ ابعت ملف JSON.")
 
-        # الإيصالات
-        receipts = get_receipts(user_id)
-        if receipts:
-            await update.message.reply_text(f"🧾 الإيصالات ({len(receipts)}):")
-            for file_id, date in receipts:
-                date_fmt = datetime.fromisoformat(date).strftime('%Y-%m-%d %H:%M')
-                await update.message.reply_photo(
-                    photo=file_id,
-                    caption=f"📅 تاريخ الحفظ: {date_fmt}"
-                )
-        else:
-            await update.message.reply_text("📭 مفيش إيصالات محفوظة لهذا المشترك.")
-
-        await update.message.reply_text("✅ تم.", reply_markup=main_keyboard())
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_GETRECEIPT_ID
-
-# ==================== LIST ====================
+# ==================== قائمة المشتركين ====================
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return
     subs = get_all_subscribers()
     if not subs:
-        await update.message.reply_text("📭 مفيش مشتركين حالياً.")
+        await update.message.reply_text("📭 مفيش مشتركين.")
         return
     now = datetime.now()
     msg = "📋 قائمة المشتركين:\n\n"
     for s in subs:
-        user_id, username, full_name, join_date, expiry_date, warned = s
+        uid, username, full_name, join_date, expiry_date, warned = s
         expiry = datetime.fromisoformat(expiry_date)
         days_left = (expiry - now).days
         status = "✅" if days_left > 3 else "⚠️" if days_left > 0 else "❌"
-        profile_link = f'<a href="tg://user?id={user_id}">{full_name}</a>'
+        profile_link = f'<a href="tg://user?id={uid}">{full_name}</a>'
         uname = f"@{username}" if username else "مفيش يوزر"
-        msg += f"{status} {profile_link} | {uname}\n"
-        msg += f"   🆔 {user_id} | باقي: {days_left} يوم | ينتهي: {expiry.strftime('%Y-%m-%d')}\n\n"
+        msg += f"{status} {profile_link} | {uname}\n🆔 {uid} | باقي: {days_left} يوم | ينتهي: {expiry.strftime('%Y-%m-%d')}\n\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==================== قائمة الزوار ====================
 async def list_visitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return
     visitors = get_all_visitors()
     if not visitors:
-        await update.message.reply_text("📭 مفيش زوار حالياً.")
+        await update.message.reply_text("📭 مفيش زوار.")
         return
-    count = get_visitor_count()
-    msg = f"👀 قائمة الزوار ({count}):\n\n"
+    msg = f"👀 قائمة الزوار ({len(visitors)}):\n\n"
     for v in visitors:
-        user_id, username, full_name, first_seen, last_seen = v
+        uid, username, full_name, first_seen, last_seen = v
         uname = f"@{username}" if username else "مفيش يوزر"
-        profile_link = f'<a href="tg://user?id={user_id}">{full_name}</a>'
-        first = datetime.fromisoformat(first_seen).strftime('%Y-%m-%d')
+        profile_link = f'<a href="tg://user?id={uid}">{full_name}</a>'
+        first = datetime.fromisoformat(first_seen).strftime('%Y-%m-%d %H:%M')
         last = datetime.fromisoformat(last_seen).strftime('%Y-%m-%d %H:%M')
-        msg += f"👤 {profile_link} | {uname}\n"
-        msg += f"   🆔 {user_id} | أول مرة: {first} | آخر مرة: {last}\n\n"
+        msg += f"👤 {profile_link} | {uname}\n🆔 {uid} | أول مرة: {first} | آخر مرة: {last}\n\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
-# ==================== الفحص اليومي ====================
-async def daily_check(context: ContextTypes.DEFAULT_TYPE):
-    subs = get_all_subscribers()
-    now = datetime.now()
-    for s in subs:
-        user_id, username, full_name, join_date, expiry_date, warned = s
-        expiry = datetime.fromisoformat(expiry_date)
-        days_left = (expiry - now).days
-        if days_left <= 3 and days_left > 0 and not warned:
-            warning_msg = (
-                f"⚠️ تنبيه لـ {full_name}\n\n"
-                f"اشتراكك هينتهي بعد {days_left} يوم!\n"
-                f"جدد اشتراكك عشان متتطردش من الجروب. 🙏"
-            )
-            try:
-                await context.bot.send_message(chat_id=user_id, text=warning_msg)
-            except Exception as e:
-                logger.warning(f"مقدرتش ابعت خاص لـ {user_id}: {e}")
-            for gid in GROUP_IDS:
-                try:
-                    await context.bot.send_message(chat_id=gid, text=warning_msg)
-                except Exception as e:
-                    logger.warning(f"مقدرتش ابعت في الجروب {gid}: {e}")
-            mark_warned(user_id)
-        elif days_left <= 0:
-            for gid in GROUP_IDS:
-                try:
-                    await context.bot.ban_chat_member(gid, user_id)
-                    await context.bot.unban_chat_member(gid, user_id)
-                except Exception as e:
-                    logger.warning(f"مقدرتش أطرد {user_id} من {gid}: {e}")
-            try:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"❌ {full_name}، انتهى اشتراكك وتم إخراجك من الجروب.\n"
-                         f"تقدر تجدد اشتراكك وترجع تاني!"
-                )
-            except Exception:
-                pass
-            remove_subscriber(user_id)
-            logger.info(f"تم طرد {full_name} ({user_id})")
-
-# ==================== تجديد اشتراك ====================
-async def renew_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "🔄 ابعتلي الـ ID بتاع المشترك اللي عايز تجدد اشتراكه:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_RENEW_ID
-
-async def renew_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
-        # جدد الاشتراك من النهارده
-        conn = get_conn()
-        c = conn.cursor()
-        join_date = datetime.now()
-        expiry_date = join_date + timedelta(days=SUBSCRIPTION_DAYS)
-        c.execute("""
-            UPDATE subscribers SET join_date=%s, expiry_date=%s, warned=0 WHERE user_id=%s
-        """, (join_date.isoformat(), expiry_date.isoformat(), user_id))
-        updated = c.rowcount
-        conn.commit()
-        conn.close()
-
-        if updated == 0:
-            # لو مش موجود، ضيفه
-            add_subscriber(user_id, "", str(user_id))
-            await update.message.reply_text(
-                f"✅ تم إضافة وتجديد اشتراك {user_id}!\n"
-                f"📅 ينتهي في: {expiry_date.strftime('%Y-%m-%d')}",
-                reply_markup=main_keyboard()
-            )
-        else:
-            await update.message.reply_text(
-                f"✅ تم تجديد اشتراك {user_id}!\n"
-                f"📅 ينتهي في: {expiry_date.strftime('%Y-%m-%d')}",
-                reply_markup=main_keyboard()
-            )
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_RENEW_ID
-
-# ==================== كشف مشترك ====================
-async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "🔍 ابعتلي الـ ID بتاع المشترك اللي عايز تعرف تفاصيله:\n\nأو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_SEARCH_ID
-
-async def search_got_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    try:
-        user_id = int(update.message.text.strip())
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute("SELECT * FROM subscribers WHERE user_id = %s", (user_id,))
-        sub = c.fetchone()
-        conn.close()
-
-        if not sub:
-            await update.message.reply_text(
-                f"❌ المشترك {user_id} مش موجود في القاعدة.",
-                reply_markup=main_keyboard()
-            )
-            return ConversationHandler.END
-
-        _, username, full_name, join_date, expiry_date, warned = sub
-        expiry = datetime.fromisoformat(expiry_date)
-        days_left = (expiry - datetime.now()).days
-        status = "✅ نشط" if days_left > 3 else "⚠️ قارب على الانتهاء" if days_left > 0 else "❌ منتهي"
-        uname = f"@{username}" if username else "مفيش يوزر"
-        profile_link = f'<a href="tg://user?id={user_id}">{full_name}</a>'
-
-        await update.message.reply_text(
-            f"🔍 تفاصيل المشترك:\n\n"
-            f"👤 الاسم: {profile_link}\n"
-            f"📛 اليوزر: {uname}\n"
-            f"🆔 ID: {user_id}\n"
-            f"📅 تاريخ الانضمام: {datetime.fromisoformat(join_date).strftime('%Y-%m-%d')}\n"
-            f"📅 ينتهي في: {expiry.strftime('%Y-%m-%d')}\n"
-            f"⏳ باقي: {days_left} يوم\n"
-            f"📊 الحالة: {status}",
-            reply_markup=main_keyboard(),
-            parse_mode="HTML"
-        )
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
-        return WAIT_SEARCH_ID
-
-# ==================== Export Backup ====================
-async def export_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ عفواً، أنت لست المطور الخاص بهذا البوت!")
+# ==================== إنشاء رابط ====================
+async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not GROUP_IDS:
+        await update.message.reply_text("❌ مفيش جروبات.")
         return
+    msg = "🔗 روابط الدعوة (مرة واحدة):\n\n"
+    for gid in GROUP_IDS:
+        try:
+            link = await context.bot.create_chat_invite_link(chat_id=gid, member_limit=1, name="رابط اشتراك")
+            chat = await context.bot.get_chat(gid)
+            msg += f"📌 {chat.title}:\n{link.invite_link}\n\n"
+        except Exception as e:
+            msg += f"❌ مقدرتش أعمل رابط للجروب {gid}: {e}\n\n"
+    await update.message.reply_text(msg, reply_markup=main_keyboard())
+
+# ==================== Pay ====================
+async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_photo(
+        photo="AgACAgEAAxkBAAIBZGoqkpsPmkOtXLVYIc94UziqQrRtAALRC2sbIFVZRTl2q1dDx9CRAQADAgADeQADOwQ",
+        caption="💳 طرق الدفع:\n\n1️⃣ 01080151847 (Vodafone Cash - Wallet)\n2️⃣ Binance number will be created soon...\n3️⃣ عمـــيل باينـــس فى انتظـار الدفع"
+    )
+
+# ==================== نسخة احتياطية ====================
+async def export_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = get_conn()
         c = conn.cursor(cursor_factory=RealDictCursor)
@@ -901,271 +719,55 @@ async def export_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_obj.name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         await update.message.reply_document(
             document=file_obj,
-            caption=(
-                f"📦 نسخة احتياطية\n"
-                f"👥 المشتركين: {len(subs)}\n"
-                f"🧾 الإيصالات: {len(receipts)}\n"
-                f"👀 الزوار: {len(visitors)}\n"
-                f"📅 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            )
-        )
+            caption=f"📦 نسخة احتياطية\n👥 {len(subs)} مشترك\n🧾 {len(receipts)} إيصال\n👀 {len(visitors)} زائر\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     except Exception as e:
-        logger.error(f"Export error: {e}")
         await update.message.reply_text(f"❌ حصل خطأ: {e}")
 
-# ==================== Import Backup (خطوة بخطوة) ====================
-async def import_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📤 ابعتلي ملف النسخة الاحتياطية (JSON):\n\n"
-        "⚠️ هيتم حذف الداتا الحالية واستبدالها بالنسخة.\n"
-        "أو اضغط 🚫 إلغاء للرجوع.",
-        reply_markup=ReplyKeyboardMarkup([["🚫 إلغاء"]], resize_keyboard=True)
-    )
-    return WAIT_IMPORT_FILE
-
-async def import_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "🚫 إلغاء":
-        return await cancel(update, context)
-    if not update.message.document:
-        await update.message.reply_text("❌ ابعت ملف JSON:")
-        return WAIT_IMPORT_FILE
-    try:
-        file = await context.bot.get_file(update.message.document.file_id)
-        tmp_path = f"/tmp/import_{update.effective_user.id}.json"
-        await file.download_to_drive(tmp_path)
-        with open(tmp_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        subs = data.get('subscribers', [])
-        receipts = data.get('receipts', [])
-        visitors = data.get('visitors', [])
-        conn = get_conn()
-        c = conn.cursor()
-        # Clear existing
-        c.execute("DELETE FROM receipts")
-        c.execute("DELETE FROM subscribers")
-        c.execute("DELETE FROM visitors")
-        # Restore subscribers
-        for s in subs:
-            c.execute("""
-                INSERT INTO subscribers (user_id, username, full_name, join_date, expiry_date, warned)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (s['user_id'], s['username'], s['full_name'], s['join_date'], s['expiry_date'], s.get('warned', 0)))
-        # Restore receipts
-        for r in receipts:
-            c.execute("""
-                INSERT INTO receipts (user_id, file_id, date)
-                VALUES (%s, %s, %s)
-            """, (r['user_id'], r['file_id'], r['date']))
-        # Restore visitors
-        for v in visitors:
-            c.execute("""
-                INSERT INTO visitors (user_id, username, full_name, first_seen, last_seen)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (user_id) DO NOTHING
-            """, (v['user_id'], v['username'], v['full_name'], v['first_seen'], v['last_seen']))
-        conn.commit()
-        conn.close()
-        os.unlink(tmp_path)
-        await update.message.reply_text(
-            f"✅ تم استعادة النسخة الاحتياطية!\n"
-            f"👥 المشتركين: {len(subs)}\n"
-            f"🧾 الإيصالات: {len(receipts)}\n"
-            f"👀 الزوار: {len(visitors)}",
-            reply_markup=main_keyboard()
-        )
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"Import error: {e}")
-        await update.message.reply_text(f"❌ حصل خطأ: {e}")
-        return ConversationHandler.END
-
-# ==================== Pay ====================
-async def pay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    await update.message.reply_photo(
-        photo="AgACAgEAAxkBAAIBZGoqkpsPmkOtXLVYIc94UziqQrRtAALRC2sbIFVZRTl2q1dDx9CRAQADAgADeQADOwQ",
-        caption=(
-            "💳 طرق الدفع:\n\n"
-            "1️⃣ 01080151847 (Vodafone Cash - Wallet)\n"
-            "2️⃣ Binance number will be created soon...\n"
-            "3️⃣ عمـــيل باينـــس فى انتظـار الدفع"
-        )
-    )
+# ==================== الفحص اليومي ====================
+async def daily_check(context: ContextTypes.DEFAULT_TYPE):
+    subs = get_all_subscribers()
+    now = datetime.now()
+    for s in subs:
+        uid, username, full_name, join_date, expiry_date, warned = s
+        expiry = datetime.fromisoformat(expiry_date)
+        days_left = (expiry - now).days
+        if days_left <= 3 and days_left > 0 and not warned:
+            warning_msg = (f"⚠️ تنبيه لـ {full_name}\n\nاشتراكك هينتهي بعد {days_left} يوم!\nجدد اشتراكك عشان متتطردش. 🙏")
+            try:
+                await context.bot.send_message(chat_id=uid, text=warning_msg)
+            except Exception:
+                pass
+            for gid in GROUP_IDS:
+                try:
+                    await context.bot.send_message(chat_id=gid, text=warning_msg)
+                except Exception:
+                    pass
+            mark_warned(uid)
+        elif days_left <= 0:
+            for gid in GROUP_IDS:
+                try:
+                    await context.bot.ban_chat_member(gid, uid)
+                    await context.bot.unban_chat_member(gid, uid)
+                except Exception:
+                    pass
+            try:
+                await context.bot.send_message(chat_id=uid,
+                    text=f"❌ {full_name}، انتهى اشتراكك وتم إخراجك.\nتقدر تجدد وترجع تاني!")
+            except Exception:
+                pass
+            remove_subscriber(uid)
 
 # ==================== التشغيل ====================
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
-    add_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("add", add_start),
-            MessageHandler(filters.Regex("^➕ إضافة مشترك$"), add_start)
-        ],
-        states={
-            WAIT_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.FORWARDED, add_got_id)],
-            WAIT_NAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_name)],
-            WAIT_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_username)],
-            WAIT_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, add_got_receipt)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    adddate_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("adddate", adddate_start),
-            MessageHandler(filters.Regex("^📅 إضافة بتاريخ قديم$"), adddate_start)
-        ],
-        states={
-            WAIT_DATE_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_id)],
-            WAIT_DATE_NAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_name)],
-            WAIT_DATE_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_username)],
-            WAIT_DATE: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_date)],
-            WAIT_DATE_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, adddate_got_receipt)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    remove_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("remove", remove_start),
-            MessageHandler(filters.Regex("^❌ حذف مشترك$"), remove_start)
-        ],
-        states={
-            WAIT_REMOVE_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, remove_got_id)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    getreceipt_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("getreceipt", getreceipt_start),
-            MessageHandler(filters.Regex("^🧾 إيصالات الدفع$"), getreceipt_start)
-        ],
-        states={
-            WAIT_GETRECEIPT_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, getreceipt_got_id)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    renew_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("renew", renew_start),
-            MessageHandler(filters.Regex("^🔄 تجديد اشتراك$"), renew_start)
-        ],
-        states={
-            WAIT_RENEW_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, renew_got_id)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    search_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("search", search_start),
-            MessageHandler(filters.Regex("^🔍 كشف مشترك$"), search_start)
-        ],
-        states={
-            WAIT_SEARCH_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, search_got_id)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    expiry_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("expiry", expiry_start),
-            MessageHandler(filters.Regex("^📅 إضافة بتاريخ انتهاء معين$"), expiry_start)
-        ],
-        states={
-            WAIT_EXPIRY_ID: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_id)],
-            WAIT_EXPIRY_NAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_name)],
-            WAIT_EXPIRY_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_username)],
-            WAIT_EXPIRY_DATE: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, expiry_got_date)],
-            WAIT_EXPIRY_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, expiry_got_receipt)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
-    import_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("import", import_start),
-            MessageHandler(filters.Regex("^📥 رفع نسخة$"), import_start)
-        ],
-        states={
-            WAIT_IMPORT_FILE: [
-                MessageHandler(filters.Document.ALL | filters.TEXT & ~filters.COMMAND, import_got_file)
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-        ],
-        conversation_timeout=300,
-        allow_reentry=True,
-    )
-
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("cancel", cancel))
-    app.add_handler(MessageHandler(filters.Regex("^📋 قائمة المشتركين$"), list_command))
-    app.add_handler(MessageHandler(filters.Regex("^👀 الزوار$"), list_visitors))
-    app.add_handler(MessageHandler(filters.Regex("^🔗 إنشاء رابط$"), create_link))
-    app.add_handler(MessageHandler(filters.Regex("^💳 Pay$"), pay_command))
-    app.add_handler(MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel))
-    app.add_handler(getreceipt_conv, group=0)
-    app.add_handler(renew_conv, group=0)
-    app.add_handler(search_conv, group=0)
-    app.add_handler(remove_conv, group=0)
-    app.add_handler(expiry_conv, group=0)
-    app.add_handler(adddate_conv, group=0)
-    app.add_handler(add_conv, group=0)
-    app.add_handler(import_conv, group=0)
-    app.add_handler(MessageHandler(filters.Regex("^📤 نسخة احتياطية$"), export_backup))
-    app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
-
-    # إشعار الأدمين لما حد غريب يبعت رسالة
-    # بس بيشتغل لو مش أدمين ومش في محادثة
     app.add_handler(MessageHandler(
-        filters.ChatType.PRIVATE & ~filters.COMMAND & filters.UpdateType.MESSAGE,
-        unknown_user_message
-    ), group=1)
-
+        filters.ALL & ~filters.COMMAND,
+        main_handler
+    ))
+    app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
     app.job_queue.run_repeating(daily_check, interval=86400, first=86400)
 
     logger.info("البوت شغال! ✅")
