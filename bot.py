@@ -338,6 +338,27 @@ async def main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 await update.message.reply_text("❌ الـ ID لازم يكون رقم! جرب تاني:")
                 return
+        # تحقق لو متسجل بالفعل
+        if is_subscribed(user_id):
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT full_name, expiry_date FROM subscribers WHERE user_id = %s", (user_id,))
+            sub = c.fetchone()
+            conn.close()
+            full_name, expiry_date = sub
+            expiry = datetime.fromisoformat(expiry_date)
+            days_left = (expiry - datetime.now()).days
+            await update.message.reply_text(
+                f"⚠️ المشترك ده متسجل بالفعل!\n\n"
+                f"👤 الاسم: {full_name}\n"
+                f"🆔 ID: {user_id}\n"
+                f"📅 ينتهي: {expiry.strftime('%Y-%m-%d')}\n"
+                f"⏳ باقي: {days_left} يوم\n\n"
+                f"عايز تجدد اشتراكه؟ استخدم 🔄 تجديد اشتراك",
+                reply_markup=main_keyboard()
+            )
+            clear_state(context)
+            return
         context.user_data['add_id'] = user_id
         context.user_data['state'] = "ADD_NAME"
         await update.message.reply_text(
@@ -647,15 +668,27 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 مفيش مشتركين.")
         return
     now = datetime.now()
-    msg = "📋 قائمة المشتركين:\n\n"
-    for s in subs:
+    msg = f"📋 قائمة المشتركين ({len(subs)})\n"
+    msg += "━━━━━━━━━━━━━━━━━━\n"
+    numbers = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
+    for i, s in enumerate(subs):
         uid, username, full_name, join_date, expiry_date, warned = s
         expiry = datetime.fromisoformat(expiry_date)
         days_left = (expiry - now).days
-        status = "✅" if days_left > 3 else "⚠️" if days_left > 0 else "❌"
+        if days_left > 3:
+            status = "✅ نشط"
+        elif days_left > 0:
+            status = "⚠️ قارب على الانتهاء"
+        else:
+            status = "❌ منتهي"
         profile_link = f'<a href="tg://user?id={uid}">{full_name}</a>'
         uname = f"@{username}" if username else "مفيش يوزر"
-        msg += f"{status} {profile_link} | {uname}\n🆔 {uid} | باقي: {days_left} يوم | ينتهي: {expiry.strftime('%Y-%m-%d')}\n\n"
+        num = numbers[i] if i < len(numbers) else f"{i+1}."
+        msg += f"{num} {profile_link}\n"
+        msg += f"   📛 {uname} | 🆔 {uid}\n"
+        msg += f"   📅 ينتهي: {expiry.strftime('%Y-%m-%d')} | ⏳ {days_left} يوم\n"
+        msg += f"   📊 {status}\n"
+        msg += "━━━━━━━━━━━━━━━━━━\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
 # ==================== قائمة الزوار ====================
