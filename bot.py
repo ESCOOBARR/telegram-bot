@@ -1015,6 +1015,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     adddate_conv = ConversationHandler(
@@ -1028,15 +1029,12 @@ def main():
             WAIT_DATE_USERNAME: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_username)],
             WAIT_DATE: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, adddate_got_date)],
             WAIT_DATE_RECEIPT: [MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel), MessageHandler(filters.PHOTO | filters.Document.ALL, adddate_got_receipt)],
-            WAIT_DATE_RECEIPT: [
-                MessageHandler(filters.PHOTO | filters.Document.ALL, adddate_got_receipt),
-                MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
-            ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     remove_conv = ConversationHandler(
@@ -1051,6 +1049,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     getreceipt_conv = ConversationHandler(
@@ -1065,6 +1064,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     renew_conv = ConversationHandler(
@@ -1079,6 +1079,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     search_conv = ConversationHandler(
@@ -1093,6 +1094,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     expiry_conv = ConversationHandler(
@@ -1111,6 +1113,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel)
         ],
+        conversation_timeout=300,
     )
 
     import_conv = ConversationHandler(
