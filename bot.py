@@ -279,11 +279,11 @@ async def unknown_user_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     if not user:
         return
-    # تجاهل لو الأدمين في محادثة
+    # تجاهل الأدمين تماماً
     if user.id in ADMIN_IDS:
-        if update.message and update.message.photo:
-            file_id = update.message.photo[-1].file_id
-            await update.message.reply_text(f"file_id: {file_id}")
+        return
+    # تجاهل لو مفيش رسالة
+    if not update.message:
         return
     full_name = f"{user.first_name} {user.last_name or ''}".strip()
     save_visitor(user.id, user.username or "", full_name)
@@ -1148,22 +1148,23 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^🔗 إنشاء رابط$"), create_link))
     app.add_handler(MessageHandler(filters.Regex("^💳 Pay$"), pay_command))
     app.add_handler(MessageHandler(filters.Regex("^🚫 إلغاء$"), cancel))
-    app.add_handler(renew_conv)
-    app.add_handler(search_conv)
-    app.add_handler(expiry_conv)
-    app.add_handler(add_conv)
-    app.add_handler(adddate_conv)
-    app.add_handler(remove_conv)
-    app.add_handler(getreceipt_conv)
+    app.add_handler(renew_conv, group=0)
+    app.add_handler(search_conv, group=0)
+    app.add_handler(expiry_conv, group=0)
+    app.add_handler(add_conv, group=0)
+    app.add_handler(adddate_conv, group=0)
+    app.add_handler(remove_conv, group=0)
+    app.add_handler(getreceipt_conv, group=0)
     app.add_handler(MessageHandler(filters.Regex("^📤 نسخة احتياطية$"), export_backup))
-    app.add_handler(import_conv)
+    app.add_handler(import_conv, group=0)
     app.add_handler(ChatMemberHandler(member_joined, ChatMemberHandler.CHAT_MEMBER))
 
-    # إشعار الأدمين لما حد غريب يبعت رسالة - في الآخر عشان ميتنازعش مع المحادثات
+    # إشعار الأدمين لما حد غريب يبعت رسالة
+    # بس بيشتغل لو مش أدمين ومش في محادثة
     app.add_handler(MessageHandler(
-        filters.ALL & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        filters.ChatType.PRIVATE & ~filters.COMMAND & filters.UpdateType.MESSAGE,
         unknown_user_message
-    ))
+    ), group=1)
 
     app.job_queue.run_repeating(daily_check, interval=86400, first=86400)
 
