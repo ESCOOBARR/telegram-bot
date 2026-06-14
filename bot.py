@@ -763,32 +763,33 @@ async def daily_check(context: ContextTypes.DEFAULT_TYPE):
     for s in subs:
         uid, username, full_name, join_date, expiry_date, warned = s
         expiry = datetime.fromisoformat(expiry_date)
-        days_left = (expiry - now).days
+        # حساب دقيق بالساعات مش الأيام بس
+        diff = expiry - now
+        days_left = diff.days
+        total_hours = diff.total_seconds() / 3600
         if days_left <= 3 and days_left > 0 and not warned:
             warning_msg = (f"⚠️ تنبيه لـ {full_name}\n\nاشتراكك هينتهي بعد {days_left} يوم!\nجدد اشتراكك عشان متتطردش. 🙏")
             try:
                 await context.bot.send_message(chat_id=uid, text=warning_msg)
             except Exception:
                 pass
-            for gid in GROUP_IDS:
-                try:
-                    await context.bot.send_message(chat_id=gid, text=warning_msg)
-                except Exception:
-                    pass
             mark_warned(uid)
-        elif days_left <= 0:
+        elif total_hours <= 0:
+            # طرد من الجروبين
             for gid in GROUP_IDS:
                 try:
                     await context.bot.ban_chat_member(gid, uid)
                     await context.bot.unban_chat_member(gid, uid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"مقدرتش أطرد {uid} من {gid}: {e}")
+            # ابعت رسالة في الخاص بس
             try:
                 await context.bot.send_message(chat_id=uid,
-                    text=f"❌ {full_name}، انتهى اشتراكك وتم إخراجك.\nتقدر تجدد وترجع تاني!")
+                    text=f"❌ {full_name}، انتهى اشتراكك وتم إخراجك من الجروب.\nتقدر تجدد وترجع تاني!")
             except Exception:
                 pass
             remove_subscriber(uid)
+            logger.info(f"تم طرد {full_name} ({uid})")
 
 # ==================== التشغيل ====================
 def main():
